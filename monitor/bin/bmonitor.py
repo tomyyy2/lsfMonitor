@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Third-party imports
 import qdarkstyle
-from PyQt5.QtCore import QDate, Qt, QThread
+from PyQt5.QtCore import QDate, Qt, QThread, QLocale, QTranslator
 from PyQt5.QtGui import QBrush, QFont, QIcon
 from PyQt5.QtWidgets import QAction, QApplication, QDateEdit, QFileDialog, QFrame, QGridLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QWidget, qApp
 
@@ -24,6 +24,7 @@ from common import common
 from common import common_lsf
 from common import common_license
 from common import common_pyqt5
+from common import i18n
 from common import common_sqlite3
 
 # Import local config file if exists.
@@ -62,27 +63,34 @@ def read_args():
 
     parser.add_argument("-j", "--jobid",
                         type=int,
-                        help='Specify the jobid which show it\'s information on "JOB" tab.')
+                        help=i18n.t('Specify the jobid which show it\'s information on "JOB" tab.'))
     parser.add_argument("-u", "--user",
                         default='',
-                        help='Specify the user show how\'s job information on "JOBS" tab.')
+                        help=i18n.t('Specify the user show how\'s job information on "JOBS" tab.'))
     parser.add_argument("-f", "--feature",
                         default='',
-                        help='Specify license feature which you want to see on "LICENSE" tab.')
+                        help=i18n.t('Specify license feature which you want to see on "LICENSE" tab.'))
     parser.add_argument("-t", "--tab",
                         default='',
                         choices=['JOB', 'JOBS', 'HOSTS', 'LOAD', 'USERS', 'QUEUES', 'UTILIZATION', 'LICENSE'],
-                        help='Specify current tab, default is "JOBS" tab.')
+                        help=i18n.t('Specify current tab, default is "JOBS" tab.'))
     parser.add_argument("--disable_license",
                         action='store_true',
                         default=False,
-                        help='Disable license check function.')
+                        help=i18n.t('Disable license check function.'))
     parser.add_argument("-d", "--dark_mode",
                         action='store_true',
                         default=False,
-                        help='Enable dark mode on the main interface.')
+                        help=i18n.t('Enable dark mode on the main interface.'))
+    parser.add_argument("-l", "--language",
+                        default='en',
+                        choices=['en', 'zh'],
+                        help=i18n.t('Set the application language.'))
 
     args = parser.parse_args()
+
+    # Set language based on argument
+    i18n.set_language(args.language)
 
     # Make sure specified job exists.
     if args.jobid:
@@ -214,7 +222,7 @@ class MainWindow(QMainWindow):
 
             if current_second - self.lsf_info_dic[lsf_info]['update_second'] > 30:
                 common.bprint(f'Loading LSF {lsf_info} information ...', date_format='%Y-%m-%d %H:%M:%S')
-                my_show_message = ShowMessage('Info', f'Loading LSF {lsf_info} information ...')
+                my_show_message = ShowMessage('Info', i18n.t('Loading LSF {lsf_info} information ...', lsf_info=lsf_info))
                 my_show_message.start()
 
                 exec(self.lsf_info_dic[lsf_info]['exec_cmd'])
@@ -248,7 +256,7 @@ class MainWindow(QMainWindow):
         # Print loading license message.
         common.bprint('Loading License information ...', date_format='%Y-%m-%d %H:%M:%S')
 
-        my_show_message = ShowMessage('Info', 'Loading license information ...')
+        my_show_message = ShowMessage('Info', i18n.t('Loading License information ...'))
         my_show_message.start()
 
         # Get self.license_dic.
@@ -293,16 +301,16 @@ class MainWindow(QMainWindow):
         self.license_tab = QWidget()
 
         # Add the sub-tabs into main Tab widget
-        self.main_tab.addTab(self.job_tab, 'JOB')
-        self.main_tab.addTab(self.jobs_tab, 'JOBS')
-        self.main_tab.addTab(self.hosts_tab, 'HOSTS')
-        self.main_tab.addTab(self.load_tab, 'LOAD')
-        self.main_tab.addTab(self.users_tab, 'USERS')
-        self.main_tab.addTab(self.queues_tab, 'QUEUES')
-        self.main_tab.addTab(self.utilization_tab, 'UTILIZATION')
+        self.main_tab.addTab(self.job_tab, i18n.t('JOB'))
+        self.main_tab.addTab(self.jobs_tab, i18n.t('JOBS'))
+        self.main_tab.addTab(self.hosts_tab, i18n.t('HOSTS'))
+        self.main_tab.addTab(self.load_tab, i18n.t('LOAD'))
+        self.main_tab.addTab(self.users_tab, i18n.t('USERS'))
+        self.main_tab.addTab(self.queues_tab, i18n.t('QUEUES'))
+        self.main_tab.addTab(self.utilization_tab, i18n.t('UTILIZATION'))
 
         if ('all' in self.license_administrator_list) or ('ALL' in self.license_administrator_list) or (USER in self.license_administrator_list):
-            self.main_tab.addTab(self.license_tab, 'LICENSE')
+            self.main_tab.addTab(self.license_tab, i18n.t('LICENSE'))
 
         # Generate the sub-tabs
         self.gen_job_tab()
@@ -347,39 +355,39 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
 
         # File
-        export_jobs_table_action = QAction('Export jobs table', self)
+        export_jobs_table_action = QAction(i18n.t('Export jobs table'), self)
         export_jobs_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_jobs_table_action.triggered.connect(self.export_jobs_table)
 
-        export_hosts_table_action = QAction('Export hosts table', self)
+        export_hosts_table_action = QAction(i18n.t('Export hosts table'), self)
         export_hosts_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_hosts_table_action.triggered.connect(self.export_hosts_table)
 
-        export_users_table_action = QAction('Export users table', self)
+        export_users_table_action = QAction(i18n.t('Export users table'), self)
         export_users_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_users_table_action.triggered.connect(self.export_users_table)
 
-        export_queues_table_action = QAction('Export queues table', self)
+        export_queues_table_action = QAction(i18n.t('Export queues table'), self)
         export_queues_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_queues_table_action.triggered.connect(self.export_queues_table)
 
-        export_utilization_table_action = QAction('Export utilization table', self)
+        export_utilization_table_action = QAction(i18n.t('Export utilization table'), self)
         export_utilization_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_utilization_table_action.triggered.connect(self.export_utilization_table)
 
-        export_license_feature_table_action = QAction('Export license feature table', self)
+        export_license_feature_table_action = QAction(i18n.t('Export license feature table'), self)
         export_license_feature_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_license_feature_table_action.triggered.connect(self.export_license_feature_table)
 
-        export_license_expires_table_action = QAction('Export license expires table', self)
+        export_license_expires_table_action = QAction(i18n.t('Export license expires table'), self)
         export_license_expires_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_license_expires_table_action.triggered.connect(self.export_license_expires_table)
 
-        exit_action = QAction('Exit', self)
+        exit_action = QAction(i18n.t('Exit'), self)
         exit_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/exit.png'))
         exit_action.triggered.connect(qApp.quit)
 
-        file_menu = menubar.addMenu('File')
+        file_menu = menubar.addMenu(i18n.t('File'))
         file_menu.addAction(export_jobs_table_action)
         file_menu.addAction(export_hosts_table_action)
         file_menu.addAction(export_users_table_action)
@@ -390,42 +398,42 @@ class MainWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
         # Setup
-        enable_queue_detail_action = QAction('Enable queue detail', self, checkable=True)
+        enable_queue_detail_action = QAction(i18n.t('Enable queue detail'), self, checkable=True)
         enable_queue_detail_action.triggered.connect(self.func_enable_queue_detail)
 
-        enable_utilization_detail_action = QAction('Enable utilization detail', self, checkable=True)
+        enable_utilization_detail_action = QAction(i18n.t('Enable utilization detail'), self, checkable=True)
         enable_utilization_detail_action.triggered.connect(self.func_enable_utilization_detail)
 
-        setup_menu = menubar.addMenu('Setup')
+        setup_menu = menubar.addMenu(i18n.t('Setup'))
         setup_menu.addAction(enable_queue_detail_action)
         setup_menu.addAction(enable_utilization_detail_action)
 
         # Function
-        check_pend_reason_action = QAction('Check Pend reason', self)
+        check_pend_reason_action = QAction(i18n.t('Check Pend reason'), self)
         check_pend_reason_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/pend.png'))
         check_pend_reason_action.triggered.connect(self.check_pend_reason)
-        check_slow_reason_action = QAction('Check Slow reason', self)
+        check_slow_reason_action = QAction(i18n.t('Check Slow reason'), self)
         check_slow_reason_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/slow.png'))
         check_slow_reason_action.triggered.connect(self.check_slow_reason)
-        check_fail_reason_action = QAction('Check Fail reason', self)
+        check_fail_reason_action = QAction(i18n.t('Check Fail reason'), self)
         check_fail_reason_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/fail.png'))
         check_fail_reason_action.triggered.connect(self.check_fail_reason)
 
-        function_menu = menubar.addMenu('Function')
+        function_menu = menubar.addMenu(i18n.t('Function'))
         function_menu.addAction(check_pend_reason_action)
         function_menu.addAction(check_slow_reason_action)
         function_menu.addAction(check_fail_reason_action)
 
         # Help
-        version_action = QAction('Version', self)
+        version_action = QAction(i18n.t('Version'), self)
         version_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/version.png'))
         version_action.triggered.connect(self.show_version)
 
-        about_action = QAction('About lsfMonitor', self)
+        about_action = QAction(i18n.t('About lsfMonitor'), self)
         about_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/about.png'))
         about_action.triggered.connect(self.show_about)
 
-        help_menu = menubar.addMenu('Help')
+        help_menu = menubar.addMenu(i18n.t('Help'))
         help_menu.addAction(version_action)
         help_menu.addAction(about_action)
 
@@ -476,18 +484,17 @@ class MainWindow(QMainWindow):
         """
         Show lsfMonitor version information.
         """
-        QMessageBox.about(self, 'lsfMonitor', 'Version: ' + str(VERSION) + ' (' + str(VERSION_DATE) + ')')
+        QMessageBox.about(self, 'lsfMonitor', i18n.t('Version: {version} ({date})', version=VERSION, date=VERSION_DATE))
 
     def show_about(self):
         """
         Show lsfMonitor about information.
         """
-        about_message = """
-Thanks for downloading lsfMonitor.
+        about_message = i18n.t("""Thanks for downloading lsfMonitor.
 
 lsfMonitor is an open source software for LSF information data-collection, data-analysis and data-display.
 
-Please contact with liyanqing1987@163.com with any question."""
+Please contact with liyanqing1987@163.com with any question.""")
 
         QMessageBox.about(self, 'lsfMonitor', about_message)
 
@@ -558,23 +565,23 @@ Please contact with liyanqing1987@163.com with any question."""
         # "Job" item.
         job_tab_job_label = QLabel(self.job_tab_frame0)
         job_tab_job_label.setStyleSheet("font-weight: bold;")
-        job_tab_job_label.setText('Job')
+        job_tab_job_label.setText(i18n.t('Job'))
 
         self.job_tab_job_line = QLineEdit()
         self.job_tab_job_line.returnPressed.connect(self.check_job_on_job_tab)
 
         # "Check" button.
-        job_tab_check_button = QPushButton('Check', self.job_tab_frame0)
+        job_tab_check_button = QPushButton(i18n.t('Check'), self.job_tab_frame0)
         job_tab_check_button.setStyleSheet('''QPushButton:hover{background:rgb(0, 85, 255);}''')
         job_tab_check_button.clicked.connect(self.check_job_on_job_tab)
 
         # "Check" button.
-        job_tab_kill_button = QPushButton('Kill', self.job_tab_frame0)
+        job_tab_kill_button = QPushButton(i18n.t('Kill'), self.job_tab_frame0)
         job_tab_kill_button.setStyleSheet('''QPushButton:hover{background:rgb(0, 85, 255);}''')
         job_tab_kill_button.clicked.connect(self.kill_job_on_job_tab)
 
         # "Check" button.
-        job_tab_trace_button = QPushButton('Trace', self.job_tab_frame0)
+        job_tab_trace_button = QPushButton(i18n.t('Trace'), self.job_tab_frame0)
         job_tab_trace_button.setStyleSheet('''QPushButton:hover{background:rgb(0, 85, 255);}''')
         job_tab_trace_button.clicked.connect(lambda: self.trace_job(jobid=self.job_tab_current_job, job_status=self.job_tab_current_job_dic[self.job_tab_current_job]['status']))
 
@@ -592,68 +599,68 @@ Please contact with liyanqing1987@163.com with any question."""
     def gen_job_tab_frame1(self):
         # self.job_tab_frame1
         # "Status" item.
-        job_tab_status_label = QLabel('Status', self.job_tab_frame1)
+        job_tab_status_label = QLabel(i18n.t('Status'), self.job_tab_frame1)
         job_tab_status_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_status_line = QLineEdit()
 
         # "User" item.
-        job_tab_user_label = QLabel('User', self.job_tab_frame1)
+        job_tab_user_label = QLabel(i18n.t('User'), self.job_tab_frame1)
         job_tab_user_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_user_line = QLineEdit()
 
         # "Project" item.
-        job_tab_project_label = QLabel('Project', self.job_tab_frame1)
+        job_tab_project_label = QLabel(i18n.t('Project'), self.job_tab_frame1)
         job_tab_project_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_project_line = QLineEdit()
 
         # "Queue" item.
-        job_tab_queue_label = QLabel('Queue', self.job_tab_frame1)
+        job_tab_queue_label = QLabel(i18n.t('Queue'), self.job_tab_frame1)
         job_tab_queue_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_queue_line = QLineEdit()
 
         # "Host" item.
-        job_tab_started_on_label = QLabel('Host', self.job_tab_frame1)
+        job_tab_started_on_label = QLabel(i18n.t('Host'), self.job_tab_frame1)
         job_tab_started_on_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_started_on_line = QLineEdit()
         self.job_tab_started_on_line.returnPressed.connect(self.job_tab_host_click)
 
         # "Start Time" item.
-        job_tab_started_time_label = QLabel('Start Time', self.job_tab_frame1)
+        job_tab_started_time_label = QLabel(i18n.t('Start Time'), self.job_tab_frame1)
         job_tab_started_time_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_started_time_line = QLineEdit()
 
         # "Finish Time" item.
-        job_tab_finished_time_label = QLabel('Finish Time', self.job_tab_frame1)
+        job_tab_finished_time_label = QLabel(i18n.t('Finish Time'), self.job_tab_frame1)
         job_tab_finished_time_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_finished_time_line = QLineEdit()
 
         # "Processors" item.
-        job_tab_processors_requested_label = QLabel('Processors', self.job_tab_frame1)
+        job_tab_processors_requested_label = QLabel(i18n.t('Processors'), self.job_tab_frame1)
         job_tab_processors_requested_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_processors_requested_line = QLineEdit()
 
         # "Rusage" item.
-        job_tab_rusage_mem_label = QLabel('Rusage', self.job_tab_frame1)
+        job_tab_rusage_mem_label = QLabel(i18n.t('Rusage'), self.job_tab_frame1)
         job_tab_rusage_mem_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_rusage_mem_line = QLineEdit()
 
         # "Mem (now)" item.
-        job_tab_mem_label = QLabel('Mem (now)', self.job_tab_frame1)
+        job_tab_mem_label = QLabel(i18n.t('Mem (now)'), self.job_tab_frame1)
         job_tab_mem_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_mem_line = QLineEdit()
 
         # "Mem (max)" item.
-        job_tab_max_mem_label = QLabel('Mem (max)', self.job_tab_frame1)
+        job_tab_max_mem_label = QLabel(i18n.t('Mem (max)'), self.job_tab_frame1)
         job_tab_max_mem_label.setStyleSheet("font-weight: bold;")
 
         self.job_tab_max_mem_line = QLineEdit()
@@ -1162,7 +1169,7 @@ Please contact with liyanqing1987@163.com with any question."""
         self.jobs_tab_table.setSortingEnabled(True)
         self.jobs_tab_table.setColumnCount(0)
         self.jobs_tab_table.setColumnCount(11)
-        self.jobs_tab_table_title_list = ['Job', 'User', 'Status', 'Queue', 'Host', 'Started', 'Project', 'Slot', 'Rusage (G)', 'Mem (G)', 'Command']
+        self.jobs_tab_table_title_list = [i18n.t('Job'), i18n.t('User'), i18n.t('Status'), i18n.t('Queue'), i18n.t('Host'), i18n.t('Started'), i18n.t('Project'), i18n.t('Slot'), i18n.t('Rusage (G)'), i18n.t('Mem (G)'), i18n.t('Command')]
         self.jobs_tab_table.setHorizontalHeaderLabels(self.jobs_tab_table_title_list)
 
         self.jobs_tab_table.setColumnWidth(0, 80)
@@ -1219,7 +1226,7 @@ Please contact with liyanqing1987@163.com with any question."""
         # Run command to get expected jobs information.
         common.bprint('Loading LSF jobs information ...', date_format='%Y-%m-%d %H:%M:%S')
 
-        my_show_message = ShowMessage('Info', 'Loading LSF jobs information ...')
+        my_show_message = ShowMessage('Info', i18n.t('Loading LSF jobs information ...'))
         my_show_message.start()
 
         job_dic = common_lsf.get_bjobs_uf_info(command)
@@ -1557,7 +1564,7 @@ Please contact with liyanqing1987@163.com with any question."""
         self.hosts_tab_table.setSortingEnabled(True)
         self.hosts_tab_table.setColumnCount(0)
         self.hosts_tab_table.setColumnCount(12)
-        self.hosts_tab_table_title_list = ['Host', 'Status', 'Queue', 'MAX', 'Njobs', 'Ut (%)', 'MaxMem (G)', 'aMem (G)', 'saMem (G)', 'MaxSwp (G)', 'Swp (G)', 'Tmp (G)']
+        self.hosts_tab_table_title_list = [i18n.t('Host'), i18n.t('Status'), i18n.t('Queue'), i18n.t('MAX'), i18n.t('Njobs'), i18n.t('Ut (%)'), i18n.t('MaxMem (G)'), i18n.t('aMem (G)'), i18n.t('saMem (G)'), i18n.t('MaxSwp (G)'), i18n.t('Swp (G)'), i18n.t('Tmp (G)')]
         self.hosts_tab_table.setHorizontalHeaderLabels(self.hosts_tab_table_title_list)
 
         self.hosts_tab_table.setColumnWidth(0, 150)
@@ -2546,7 +2553,7 @@ Please contact with liyanqing1987@163.com with any question."""
         self.users_tab_table.setSortingEnabled(True)
         self.users_tab_table.setColumnCount(0)
         self.users_tab_table.setColumnCount(9)
-        self.users_tab_table_title_list = ['User', 'Job_Num', 'Pass_Rate (%)', 'Total_Rusage_Mem (G)', 'Avg_Rusage_Mem (G)', 'Total_Max_Mem (G)', 'Avg_Max_Mem (G)', 'Total_Mem_Waste (G)', 'Avg_Mem_Waste (G)']
+        self.users_tab_table_title_list = [i18n.t('User'), i18n.t('Job_Num'), i18n.t('Pass_Rate (%)'), i18n.t('Total_Rusage_Mem (G)'), i18n.t('Avg_Rusage_Mem (G)'), i18n.t('Total_Max_Mem (G)'), i18n.t('Avg_Max_Mem (G)'), i18n.t('Total_Mem_Waste (G)'), i18n.t('Avg_Mem_Waste (G)')]
         self.users_tab_table.setHorizontalHeaderLabels(self.users_tab_table_title_list)
 
         self.users_tab_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -2802,7 +2809,7 @@ Please contact with liyanqing1987@163.com with any question."""
         self.queues_tab_table.setShowGrid(True)
         self.queues_tab_table.setColumnCount(0)
         self.queues_tab_table.setColumnCount(4)
-        self.queues_tab_table_title_list = ['QUEUE', 'SLOTS', 'PEND', 'RUN']
+        self.queues_tab_table_title_list = [i18n.t('QUEUE'), i18n.t('SLOTS'), i18n.t('PEND'), i18n.t('RUN')]
         self.queues_tab_table.setHorizontalHeaderLabels(self.queues_tab_table_title_list)
 
         self.queues_tab_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -3630,7 +3637,7 @@ Please contact with liyanqing1987@163.com with any question."""
         self.utilization_tab_table.setColumnCount(5)
         self.utilization_tab_table.setRowCount(0)
         self.utilization_tab_table.setRowCount(len(queue_utilization_dic))
-        self.utilization_tab_table_title_list = ['Queue', 'slots', 'slot(%)', 'cpu(%)', 'mem(%)']
+        self.utilization_tab_table_title_list = [i18n.t('Queue'), i18n.t('slots'), i18n.t('slot(%)'), i18n.t('cpu(%)'), i18n.t('mem(%)')]
         self.utilization_tab_table.setHorizontalHeaderLabels(self.utilization_tab_table_title_list)
 
         self.utilization_tab_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -3935,7 +3942,7 @@ Please contact with liyanqing1987@163.com with any question."""
     def gen_license_tab_frame0(self):
         # self.license_tab_frame0
         # "Show" item.
-        license_tab_show_label = QLabel('Show', self.license_tab_frame0)
+        license_tab_show_label = QLabel(i18n.t('Show'), self.license_tab_frame0)
         license_tab_show_label.setStyleSheet("font-weight: bold;")
         license_tab_show_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
@@ -4119,7 +4126,7 @@ Please contact with liyanqing1987@163.com with any question."""
         self.license_tab_feature_table.setSortingEnabled(True)
         self.license_tab_feature_table.setColumnCount(0)
         self.license_tab_feature_table.setColumnCount(5)
-        self.license_tab_feature_table_title_list = ['Server', 'Vendor', 'Feature', 'Issued', 'In_Use']
+        self.license_tab_feature_table_title_list = [i18n.t('Server'), i18n.t('Vendor'), i18n.t('Feature'), i18n.t('Issued'), i18n.t('In_Use')]
         self.license_tab_feature_table.setHorizontalHeaderLabels(self.license_tab_feature_table_title_list)
 
         self.license_tab_feature_table.setColumnWidth(0, 160)
@@ -4206,7 +4213,7 @@ Please contact with liyanqing1987@163.com with any question."""
         self.license_tab_expires_table.setSortingEnabled(True)
         self.license_tab_expires_table.setColumnCount(0)
         self.license_tab_expires_table.setColumnCount(4)
-        self.license_tab_expires_table_title_list = ['License Server', 'Feature', 'Num', 'Expires']
+        self.license_tab_expires_table_title_list = [i18n.t('License Server'), i18n.t('Feature'), i18n.t('Num'), i18n.t('Expires')]
         self.license_tab_expires_table.setHorizontalHeaderLabels(self.license_tab_expires_table_title_list)
 
         self.license_tab_expires_table.setColumnWidth(0, 160)
