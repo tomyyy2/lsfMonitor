@@ -25,6 +25,7 @@ from common import common_lsf
 from common import common_license
 from common import common_pyqt5
 from common import common_sqlite3
+from common import runtime_utils
 
 # Import local config file if exists.
 local_config_dir = str(os.environ['HOME']) + '/.lsfMonitor/conf'
@@ -84,19 +85,10 @@ def read_args():
 
     args = parser.parse_args()
 
-    # Make sure specified job exists.
-    if args.jobid:
-        if not args.tab:
-            args.tab = 'JOB'
-
-    # Determine default tab
-    tab_priority = [
-        (args.jobid, 'JOB'),
-        (args.user, 'JOBS'),
-        (args.feature, 'LICENSE')
-    ]
-
-    args.tab = next((tab for condition, tab in tab_priority if condition), 'JOBS')
+    args.tab = runtime_utils.resolve_monitor_tab(jobid=args.jobid,
+                                                 user=args.user,
+                                                 feature=args.feature,
+                                                 explicit_tab=args.tab)
 
     return args.jobid, args.user, args.feature, args.tab, args.disable_license, args.dark_mode
 

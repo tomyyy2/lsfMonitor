@@ -656,50 +656,50 @@ class Sampling:
             self.cleanup_db()
 
         # Sample.
-        sample_mark = False
+        process_list = []
 
         if self.job_sampling:
-            sample_mark = True
             p = Process(target=self.sample_job_info)
             p.start()
+            process_list.append(p)
 
         if self.job_mem_sampling:
-            sample_mark = True
             p = Process(target=self.sample_job_mem_info)
             p.start()
+            process_list.append(p)
 
         if self.queue_sampling:
-            sample_mark = True
             p = Process(target=self.sample_queue_info)
             p.start()
+            process_list.append(p)
 
         if self.host_sampling:
-            sample_mark = True
             p = Process(target=self.sample_host_info)
             p.start()
+            process_list.append(p)
 
         if self.load_sampling:
-            sample_mark = True
             p = Process(target=self.sample_load_info)
             p.start()
+            process_list.append(p)
 
         if self.user_sampling:
-            sample_mark = True
             p = Process(target=self.sample_user_info)
             p.start()
+            process_list.append(p)
 
         if self.utilization_sampling:
-            sample_mark = True
             p = Process(target=self.sample_utilization_info)
             p.start()
+            process_list.append(p)
 
         if self.utilization_day_sampling:
-            sample_mark = True
             p = Process(target=self.count_utilization_day_info)
             p.start()
+            process_list.append(p)
 
-        if sample_mark:
-            p.join()
+        for process in process_list:
+            process.join()
 
 
 #################
