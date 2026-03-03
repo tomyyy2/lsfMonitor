@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
 import uuid
@@ -127,6 +128,15 @@ def _load_bmonitor_module(monkeypatch):
     return module
 
 
+def _read_history_records(window):
+    history_file = window.get_report_export_history_file()
+
+    if not history_file.exists():
+        return []
+
+    return [json.loads(line) for line in history_file.read_text(encoding='utf-8').splitlines() if line.strip()]
+
+
 def test_build_weekly_report_command_contains_required_flags(monkeypatch, tmp_path):
     bmonitor = _load_bmonitor_module(monkeypatch)
 
@@ -186,6 +196,18 @@ def test_export_weekly_summary_report_bundle_success(monkeypatch, tmp_path):
     assert len(information_messages) == 1
     assert 'Weekly summary exported successfully' in information_messages[0]
 
+    history_records = _read_history_records(window)
+    assert len(history_records) == 4
+    assert all(record['status'] == 'SUCCESS' for record in history_records)
+
+    exported_paths = {Path(record['path']).name for record in history_records}
+    assert exported_paths == {
+        'lsfmon_weekly_20260303.csv',
+        'lsfmon_weekly_metrics_20260303.csv',
+        'lsfmon_weekly_anomaly_top_20260303.csv',
+        'lsfmon_weekly_20260303.md',
+    }
+
 
 def test_export_weekly_summary_report_bundle_failure(monkeypatch, tmp_path):
     bmonitor = _load_bmonitor_module(monkeypatch)
@@ -211,3 +233,32 @@ def test_export_weekly_summary_report_bundle_failure(monkeypatch, tmp_path):
     assert len(warning_messages) == 1
     assert 'Failed to export weekly summary' in warning_messages[0]
     assert 'mock export failure' in warning_messages[0]
+
+    history_records = _read_history_records(window)
+    assert len(history_records) == 1
+    assert history_records[0]['type'] == 'weekly_summary'
+    assert history_records[0]['status'] == 'FAILED'
+    assert history_records[0]['message'] == 'mock export failure'
+
+
+def test_report_export_history_append_and_load_recent_records(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+
+    window.append_report_export_history(export_type='csv', export_path='/tmp/a.csv', status='SUCCESS', message='ok-1')
+    window.append_report_export_history(export_type='md', export_path='/tmp/a.md', status='FAILED', message='boom')
+
+    history_file = window.get_report_export_history_file()
+    history_file.write_text(history_file.read_text(encoding='utf-8') + 'not-a-json-line\n', encoding='utf-8')
+
+    window.append_report_export_history(export_type='csv', export_path='/tmp/b.csv', status='SUCCESS', message='ok-2')
+
+    latest_two = window.load_recent_report_export_history(limit=2)
+    assert [item['path'] for item in latest_two] == ['/tmp/b.csv', '/tmp/a.md']
+    assert latest_two[0]['message'] == 'ok-2'
+    assert latest_two[1]['status'] == 'FAILED'
+
+    all_records = window.load_recent_report_export_history(limit=0)
+    assert [item['path'] for item in all_records] == ['/tmp/b.csv', '/tmp/a.md', '/tmp/a.csv']

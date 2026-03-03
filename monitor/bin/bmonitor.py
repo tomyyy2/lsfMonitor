@@ -9,6 +9,7 @@ import copy
 import getpass
 import argparse
 import datetime
+import json
 import subprocess
 from pathlib import Path
 
@@ -388,6 +389,10 @@ class MainWindow(QMainWindow):
         export_weekly_summary_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_weekly_summary_action.triggered.connect(self.export_weekly_summary_report_bundle)
 
+        view_report_export_history_action = QAction('View report export history', self)
+        view_report_export_history_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
+        view_report_export_history_action.triggered.connect(self.show_report_export_history)
+
         exit_action = QAction('Exit', self)
         exit_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/exit.png'))
         exit_action.triggered.connect(qApp.quit)
@@ -404,6 +409,7 @@ class MainWindow(QMainWindow):
         if self.is_license_admin_user():
             file_menu.addSeparator()
             file_menu.addAction(export_weekly_summary_action)
+            file_menu.addAction(view_report_export_history_action)
 
         file_menu.addAction(exit_action)
 
@@ -4308,6 +4314,87 @@ Please contact with liyanqing1987@163.com with any question."""
             str(output_dir),
         ]
 
+    def get_report_export_history_file(self):
+        """
+        Return history file path for report export records.
+        """
+        history_dir = Path(self.db_path).resolve() / 'log'
+        history_dir.mkdir(parents=True, exist_ok=True)
+        return history_dir / 'report_export_history.jsonl'
+
+    def append_report_export_history(self, export_type, export_path, status='SUCCESS', message=''):
+        """
+        Append one report export history record.
+        """
+        history_file = self.get_report_export_history_file()
+        history_record = {
+            'time': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'type': str(export_type),
+            'path': str(export_path),
+            'status': str(status),
+            'message': str(message),
+        }
+
+        try:
+            with open(history_file, 'a', encoding='utf-8') as handler:
+                handler.write(json.dumps(history_record, ensure_ascii=False) + '\n')
+        except Exception as error:
+            common.bprint(f'Failed to append report export history: {error}', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+
+    def load_recent_report_export_history(self, limit=10):
+        """
+        Load recent report export history records.
+        """
+        history_file = self.get_report_export_history_file()
+
+        if not history_file.exists():
+            return []
+
+        history_record_list = []
+
+        with open(history_file, 'r', encoding='utf-8') as handler:
+            for line in handler:
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                try:
+                    history_record_list.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+        if limit <= 0:
+            return list(reversed(history_record_list))
+
+        return list(reversed(history_record_list[-limit:]))
+
+    def show_report_export_history(self):
+        """
+        Show recent report export history records on GUI.
+        """
+        history_record_list = self.load_recent_report_export_history(limit=10)
+
+        if not history_record_list:
+            message = 'No report export history found.'
+        else:
+            message_line_list = ['Recent 10 report export records (newest first):', 'Time | Type | Path']
+
+            for history_record in history_record_list:
+                export_time = history_record.get('time', 'N/A')
+                export_type = history_record.get('type', 'unknown')
+                export_path = history_record.get('path', 'N/A')
+                export_status = history_record.get('status', 'SUCCESS')
+
+                if export_status != 'SUCCESS':
+                    export_type = f'{export_type} ({export_status})'
+
+                message_line_list.append(f'{export_time} | {export_type} | {export_path}')
+
+            message = '\n'.join(message_line_list)
+
+        QMessageBox.information(self, 'Report Export History', message)
+
     def _collect_weekly_report_exports(self, output_dir):
         """
         Collect newest weekly export files for GUI confirmation.
@@ -4348,19 +4435,36 @@ Please contact with liyanqing1987@163.com with any question."""
         try:
             completed = subprocess.run(command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         except Exception as error:
+            self.append_report_export_history(
+                export_type='weekly_summary',
+                export_path=output_dir,
+                status='FAILED',
+                message=str(error),
+            )
             self.gui_warning(f'Failed to execute weekly summary export command: {error}')
             return
 
         if completed.returncode != 0:
             error_message = completed.stderr.strip() or completed.stdout.strip() or f'Command exit code {completed.returncode}'
+            self.append_report_export_history(
+                export_type='weekly_summary',
+                export_path=output_dir,
+                status='FAILED',
+                message=error_message,
+            )
             self.gui_warning(f'Failed to export weekly summary: {error_message}')
             return
 
         exported_file_list = self._collect_weekly_report_exports(Path(output_dir))
 
         if exported_file_list:
+            for exported_file in exported_file_list:
+                file_type = exported_file.suffix.replace('.', '') or 'file'
+                self.append_report_export_history(export_type=file_type, export_path=exported_file)
+
             message = 'Weekly summary exported successfully:\n' + '\n'.join(str(item) for item in exported_file_list)
         else:
+            self.append_report_export_history(export_type='weekly_summary', export_path=output_dir)
             message = f'Weekly summary command finished.\nOutput directory: {output_dir}'
 
         QMessageBox.information(self, 'Report Export Center', message)
