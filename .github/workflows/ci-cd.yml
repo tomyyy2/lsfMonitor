@@ -29,6 +29,9 @@ jobs:
         env:
           LSFMONITOR_INSTALL_PATH: ${{ github.workspace }}
         run: |
+          python -m pip install --upgrade pip
+          # bsample -> common.py imports pandas at module import time
+          python -m pip install pandas
           python install.py -h
           python monitor/bin/bsample.py -h
       - name: Runtime behavior dry-run verification (stdlib only)
