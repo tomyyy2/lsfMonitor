@@ -53,6 +53,7 @@ def _install_bmonitor_stubs(monkeypatch):
         'QFrame',
         'QGridLayout',
         'QHeaderView',
+        'QInputDialog',
         'QLabel',
         'QLineEdit',
         'QMainWindow',
@@ -290,7 +291,7 @@ def test_export_weekly_summary_report_bundle_failure(monkeypatch, tmp_path):
     window.export_weekly_summary_report_bundle()
 
     assert len(warning_messages) == 1
-    assert 'Failed to export weekly summary' in warning_messages[0]
+    assert '[COMMAND_FAILED]' in warning_messages[0]
     assert 'mock export failure' in warning_messages[0]
 
     history_records = _read_history_records(window)
@@ -321,3 +322,100 @@ def test_report_export_history_append_and_load_recent_records(monkeypatch, tmp_p
 
     all_records = window.load_recent_report_export_history(limit=0)
     assert [item['path'] for item in all_records] == ['/tmp/b.csv', '/tmp/a.md', '/tmp/a.csv']
+
+
+def test_load_recent_report_export_history_supports_status_filter(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+
+    window.append_report_export_history(export_type='csv', export_path='/tmp/a.csv', status='SUCCESS', message='ok')
+    window.append_report_export_history(export_type='md', export_path='/tmp/b.md', status='FAILED', message='boom')
+    window.append_report_export_history(export_type='weekly_summary', export_path='/tmp/reports', status='NO_EXPORT', message='no-data')
+
+    failed_records = window.load_recent_report_export_history(limit=0, status_filter='FAILED')
+    assert [item['path'] for item in failed_records] == ['/tmp/b.md']
+
+    no_export_records = window.load_recent_report_export_history(limit=0, status_filter='NO_EXPORT')
+    assert [item['path'] for item in no_export_records] == ['/tmp/reports']
+
+    all_records = window.load_recent_report_export_history(limit=0, status_filter='all')
+    assert [item['path'] for item in all_records] == ['/tmp/reports', '/tmp/b.md', '/tmp/a.csv']
+
+
+def test_show_report_export_history_generates_copy_text(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+
+    window.append_report_export_history(export_type='csv', export_path='/tmp/success.csv', status='SUCCESS', message='ok')
+    window.append_report_export_history(export_type='md', export_path='/tmp/fail.md', status='FAILED', message='boom')
+
+    monkeypatch.setattr(
+        bmonitor.QInputDialog,
+        'getItem',
+        lambda *_args, **_kwargs: ('FAILED', True),
+        raising=False,
+    )
+
+    info_messages = []
+    monkeypatch.setattr(
+        bmonitor.QMessageBox,
+        'information',
+        lambda *_args: info_messages.append(_args[2]),
+        raising=False,
+    )
+
+    clipboard_state = {'text': ''}
+
+    class _Clipboard:
+        def setText(self, text):
+            clipboard_state['text'] = text
+
+    monkeypatch.setattr(
+        bmonitor.QApplication,
+        'clipboard',
+        lambda: _Clipboard(),
+        raising=False,
+    )
+
+    window.show_report_export_history()
+
+    assert len(info_messages) == 1
+    assert 'status=FAILED' in info_messages[0]
+    assert '/tmp/fail.md' in info_messages[0]
+    assert '/tmp/success.csv' not in info_messages[0]
+    assert 'Copy-ready paths' in info_messages[0]
+    assert clipboard_state['text'] == '/tmp/fail.md'
+
+
+def test_export_weekly_summary_report_bundle_permission_error(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    output_dir = tmp_path / 'reports'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+    window.select_report_output_dir = lambda: str(output_dir)
+
+    warning_messages = []
+    window.gui_warning = lambda message: warning_messages.append(message)
+
+    monkeypatch.setattr(
+        bmonitor.subprocess,
+        'run',
+        lambda *_args, **_kwargs: types.SimpleNamespace(returncode=1, stdout='', stderr='Permission denied: reports dir'),
+    )
+
+    window.export_weekly_summary_report_bundle()
+
+    assert len(warning_messages) == 1
+    assert '[PERMISSION]' in warning_messages[0]
+
+    history_records = _read_history_records(window)
+    assert len(history_records) == 1
+    assert history_records[0]['status'] == 'FAILED'
+    assert history_records[0]['message'] == 'Permission denied: reports dir'

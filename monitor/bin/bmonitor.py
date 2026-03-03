@@ -17,7 +17,7 @@ from pathlib import Path
 import qdarkstyle
 from PyQt5.QtCore import QDate, Qt, QThread
 from PyQt5.QtGui import QBrush, QFont, QIcon
-from PyQt5.QtWidgets import QAction, QApplication, QDateEdit, QFileDialog, QFrame, QGridLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QWidget, qApp
+from PyQt5.QtWidgets import QAction, QApplication, QDateEdit, QFileDialog, QFrame, QGridLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QWidget, qApp
 
 # Local imports
 LSFMONITOR_INSTALL_PATH = Path(os.environ['LSFMONITOR_INSTALL_PATH'])
@@ -44,6 +44,8 @@ VERSION = 'V2.0'
 VERSION_DATE = '2026.02.08'
 USER = getpass.getuser()
 DEFAULT_RUNTIME_DIR = Path('/tmp') / f'runtime-{USER}'
+REPORT_EXPORT_STATUS_FILTERS = ['ALL', 'SUCCESS', 'FAILED', 'NO_EXPORT']
+REPORT_EXPORT_HISTORY_LIMIT = 10
 
 # Environment configuration
 os.environ.update({
@@ -4341,7 +4343,68 @@ Please contact with liyanqing1987@163.com with any question."""
         except Exception as error:
             common.bprint(f'Failed to append report export history: {error}', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
 
-    def load_recent_report_export_history(self, limit=10):
+    def normalize_report_export_status_filter(self, status_filter='ALL'):
+        """
+        Normalize requested report export status filter.
+        """
+        normalized_filter = str(status_filter or 'ALL').strip().upper()
+
+        if normalized_filter not in REPORT_EXPORT_STATUS_FILTERS:
+            return 'ALL'
+
+        return normalized_filter
+
+    def build_report_export_history_copy_text(self, history_record_list):
+        """
+        Build newline-joined copy text from history paths.
+        """
+        return '\n'.join(
+            str(history_record.get('path', '')).strip()
+            for history_record in history_record_list
+            if str(history_record.get('path', '')).strip()
+        )
+
+    def copy_report_export_history_paths(self, copy_text):
+        """
+        Copy report export paths into clipboard if possible.
+        """
+        if not copy_text or not hasattr(QApplication, 'clipboard'):
+            return False
+
+        try:
+            clipboard = QApplication.clipboard()
+
+            if clipboard is None or not hasattr(clipboard, 'setText'):
+                return False
+
+            clipboard.setText(copy_text)
+            return True
+        except Exception as error:
+            common.bprint(f'Failed to copy report export path list: {error}', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+            return False
+
+    def _select_report_export_history_status_filter(self):
+        """
+        Ask user to choose status filter for export history window.
+        """
+        if not hasattr(QInputDialog, 'getItem'):
+            return 'ALL'
+
+        selected_filter, is_confirmed = QInputDialog.getItem(
+            self,
+            'Report Export History',
+            'Select status filter:',
+            REPORT_EXPORT_STATUS_FILTERS,
+            0,
+            False,
+        )
+
+        if not is_confirmed:
+            return None
+
+        return self.normalize_report_export_status_filter(selected_filter)
+
+    def load_recent_report_export_history(self, limit=REPORT_EXPORT_HISTORY_LIMIT, status_filter='ALL'):
         """
         Load recent report export history records.
         """
@@ -4350,6 +4413,7 @@ Please contact with liyanqing1987@163.com with any question."""
         if not history_file.exists():
             return []
 
+        expected_status = self.normalize_report_export_status_filter(status_filter)
         history_record_list = []
 
         with open(history_file, 'r', encoding='utf-8') as handler:
@@ -4360,9 +4424,17 @@ Please contact with liyanqing1987@163.com with any question."""
                     continue
 
                 try:
-                    history_record_list.append(json.loads(line))
+                    history_record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+
+                export_status = self.normalize_report_export_status_filter(history_record.get('status', 'SUCCESS'))
+
+                if expected_status != 'ALL' and export_status != expected_status:
+                    continue
+
+                history_record['status'] = export_status
+                history_record_list.append(history_record)
 
         if limit <= 0:
             return list(reversed(history_record_list))
@@ -4373,23 +4445,35 @@ Please contact with liyanqing1987@163.com with any question."""
         """
         Show recent report export history records on GUI.
         """
-        history_record_list = self.load_recent_report_export_history(limit=10)
+        selected_filter = self._select_report_export_history_status_filter()
+
+        if selected_filter is None:
+            return
+
+        history_record_list = self.load_recent_report_export_history(limit=REPORT_EXPORT_HISTORY_LIMIT, status_filter=selected_filter)
 
         if not history_record_list:
-            message = 'No report export history found.'
+            message = f'No report export history found (status filter: {selected_filter}).'
         else:
-            message_line_list = ['Recent 10 report export records (newest first):', 'Time | Type | Path']
+            message_line_list = [
+                f'Recent {REPORT_EXPORT_HISTORY_LIMIT} report export records (newest first, status={selected_filter}):',
+                'Time | Type | Status | Path',
+            ]
 
             for history_record in history_record_list:
                 export_time = history_record.get('time', 'N/A')
                 export_type = history_record.get('type', 'unknown')
                 export_path = history_record.get('path', 'N/A')
-                export_status = history_record.get('status', 'SUCCESS')
+                export_status = self.normalize_report_export_status_filter(history_record.get('status', 'SUCCESS'))
 
-                if export_status != 'SUCCESS':
-                    export_type = f'{export_type} ({export_status})'
+                message_line_list.append(f'{export_time} | {export_type} | {export_status} | {export_path}')
 
-                message_line_list.append(f'{export_time} | {export_type} | {export_path}')
+            copy_text = self.build_report_export_history_copy_text(history_record_list)
+
+            if copy_text:
+                copied = self.copy_report_export_history_paths(copy_text)
+                copy_tips = 'Copy-ready paths (already copied to clipboard):' if copied else 'Copy-ready paths:'
+                message_line_list.extend(['', copy_tips, copy_text])
 
             message = '\n'.join(message_line_list)
 
@@ -4427,6 +4511,33 @@ Please contact with liyanqing1987@163.com with any question."""
 
         return exported_file_list
 
+    def _is_permission_related_error(self, error_message='', error_obj=None):
+        """
+        Check whether export failure is likely caused by filesystem permission issues.
+        """
+        if isinstance(error_obj, PermissionError):
+            return True
+
+        message_lower = str(error_message or '').lower()
+        permission_hint_list = [
+            'permission denied',
+            'operation not permitted',
+            'access is denied',
+            'permissionerror',
+            'eacces',
+        ]
+
+        return any(permission_hint in message_lower for permission_hint in permission_hint_list)
+
+    def _format_weekly_export_failure_warning(self, error_message='', error_obj=None):
+        """
+        Format graded warning message for weekly summary export failures.
+        """
+        if self._is_permission_related_error(error_message=error_message, error_obj=error_obj):
+            return f'Weekly summary export failed [PERMISSION]: {error_message}'
+
+        return f'Weekly summary export failed [COMMAND_FAILED]: {error_message}'
+
     def export_weekly_summary_report_bundle(self):
         """
         One-click export weekly summary via lsfmon report weekly --export csv,md.
@@ -4448,13 +4559,14 @@ Please contact with liyanqing1987@163.com with any question."""
         try:
             completed = subprocess.run(command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         except Exception as error:
+            error_message = str(error)
             self.append_report_export_history(
                 export_type='weekly_summary',
                 export_path=output_dir,
                 status='FAILED',
-                message=str(error),
+                message=error_message,
             )
-            self.gui_warning(f'Failed to execute weekly summary export command: {error}')
+            self.gui_warning(self._format_weekly_export_failure_warning(error_message=error_message, error_obj=error))
             return
 
         if completed.returncode != 0:
@@ -4465,7 +4577,7 @@ Please contact with liyanqing1987@163.com with any question."""
                 status='FAILED',
                 message=error_message,
             )
-            self.gui_warning(f'Failed to export weekly summary: {error_message}')
+            self.gui_warning(self._format_weekly_export_failure_warning(error_message=error_message))
             return
 
         exported_file_list = self._collect_weekly_report_exports(Path(output_dir), start_ts=command_start_ts)
@@ -4477,7 +4589,7 @@ Please contact with liyanqing1987@163.com with any question."""
 
             message = 'Weekly summary exported successfully:\n' + '\n'.join(str(item) for item in exported_file_list)
         else:
-            no_export_message = '无新导出（No new export generated）'
+            no_export_message = '[NO_DATA] 无新导出（No new export generated）'
             self.append_report_export_history(
                 export_type='weekly_summary',
                 export_path=output_dir,
