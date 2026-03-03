@@ -90,6 +90,7 @@ jobs:
         env:
           LSFMONITOR_INSTALL_PATH: ${{ github.workspace }}
           HOME: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           set -e
 
