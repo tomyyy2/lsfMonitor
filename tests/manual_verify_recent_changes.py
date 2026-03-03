@@ -107,6 +107,7 @@ def load_bmonitor_module():
         'QFrame',
         'QGridLayout',
         'QHeaderView',
+        'QInputDialog',
         'QLabel',
         'QLineEdit',
         'QMainWindow',

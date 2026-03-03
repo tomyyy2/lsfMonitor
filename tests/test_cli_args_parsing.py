@@ -100,6 +100,7 @@ def _install_bmonitor_stubs(monkeypatch):
         'QFrame',
         'QGridLayout',
         'QHeaderView',
+        'QInputDialog',
         'QLabel',
         'QLineEdit',
         'QMainWindow',
