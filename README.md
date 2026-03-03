@@ -35,6 +35,22 @@ Execute command `bmonitor` to start lsfMonitor.
 
    ![license demo](data/demo/license_demo.gif)
 
+## Engineer CLI (M1 MVP)
+`lsfMonitor` now provides an engineer-oriented CLI entry: `lsfmon`.
+
+Available M1 subcommands:
+
+- `lsfmon my jobs`
+- `lsfmon my mem --days 7`
+- `lsfmon advise --job <jobid>`
+
+Notes:
+
+- `my jobs` reads your current LSF jobs.
+- `my mem` summarizes your sampled memory history from `bsample -u` data.
+- `advise` gives a simple `rusage[mem]` range suggestion for a specified job.
+- If LSF environment is not available, `lsfmon` will report a clear setup error.
+
 ## Configuration
 After installing the tool, come into <LSFMONITOR_INSTALL_PATH>/monitor/conf directory,
 then update file config.py for your own configuration.
@@ -112,3 +128,5 @@ More details please see ["docs/lsfMonitor_user_manual.pdf"](./docs/lsfMonitor_us
 | V2.0    | (2026.02) | Update python3.8.8 support to python3.12.12.                 |
 |         |           | Add the logging function.                                    |
 |         |           | Optimize with AI suggestion.                                 |
+| V2.1    | (2026.03) | Add engineer CLI MVP command `lsfmon`.                      |
+|         |           | Support `my jobs` / `my mem --days` / `advise --job`.       |
