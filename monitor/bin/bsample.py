@@ -36,7 +36,7 @@ def read_args():
     parser.add_argument("-c", "--cleanup",
                         action="store_true",
                         default=False,
-                        help='Clean up database with entries limiation.')
+                        help='Clean up database with entries limitation.')
     parser.add_argument("-j", "--job",
                         action="store_true",
                         default=False,
@@ -136,6 +136,18 @@ class Sampling:
 
         return tool, cluster
 
+    def _close_db_conn(self, db_file, db_conn):
+        """
+        Safely close sqlite connection.
+        """
+        if not db_conn:
+            return
+
+        try:
+            db_conn.close()
+        except Exception as error:
+            common.bprint(f'Failed to close database "{db_file}": {error}', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+
     def cleanup_db(self):
         """
         Clean up sqlite3 database with self.db_entries_limit_dic limitation.
@@ -146,23 +158,26 @@ class Sampling:
             item_db_file = str(self.db_path) + '/' + str(item) + '.db'
 
             if os.path.exists(item_db_file):
-                item_entries_limitation = self.db_entries_limit_dic[item]
-                common.bprint(f'>>> Clean up "{item_db_file}" with entries limitation {item_entries_limitation} ...', date_format='%Y-%m-%d %H:%M:%S')
+                item_entries_limit = self.db_entries_limit_dic[item]
+                common.bprint(f'>>> Clean up "{item_db_file}" with entries limitation {item_entries_limit} ...', date_format='%Y-%m-%d %H:%M:%S')
                 (result, item_db_conn) = common_sqlite3.connect_db_file(item_db_file, mode='write')
 
                 if result == 'passed':
-                    item_table_list = common_sqlite3.get_sql_table_list(item_db_file, item_db_conn)
+                    try:
+                        item_table_list = common_sqlite3.get_sql_table_list(item_db_file, item_db_conn)
 
-                    for item_table_name in item_table_list:
-                        item_table_count = common_sqlite3.get_sql_table_count(item_db_file, item_db_conn, item_table_name)
+                        for item_table_name in item_table_list:
+                            item_table_count = common_sqlite3.get_sql_table_count(item_db_file, item_db_conn, item_table_name)
 
-                        if item_table_count != 'N/A':
-                            if int(item_table_count) > item_entries_limitation:
-                                begin_line = 0
-                                end_line = int(item_table_count) - item_entries_limitation
+                            if item_table_count != 'N/A':
+                                if int(item_table_count) > item_entries_limit:
+                                    begin_line = 0
+                                    end_line = int(item_table_count) - item_entries_limit
 
-                                common.bprint(f'Deleting database "{item_db_file}" table "{item_table_name}" {begin_line}-{end_line} lines to only keep {item_entries_limitation} items.', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
-                                common_sqlite3.delete_sql_table_rows(item_db_file, item_db_conn, item_table_name, 'sample_time', begin_line, end_line)
+                                    common.bprint(f'Deleting database "{item_db_file}" table "{item_table_name}" {begin_line}-{end_line} lines to only keep {item_entries_limit} items.', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                                    common_sqlite3.delete_sql_table_rows(item_db_file, item_db_conn, item_table_name, 'sample_time', begin_line, end_line)
+                    finally:
+                        self._close_db_conn(item_db_file, item_db_conn)
 
     def sample_job_info(self):
         """
@@ -195,16 +210,18 @@ class Sampling:
             (result, finished_date_db_conn) = common_sqlite3.connect_db_file(finished_date_db_file, mode='write')
 
             if result == 'passed':
-                common_sqlite3.create_sql_table(finished_date_db_file, finished_date_db_conn, 'job', key_string, commit=False)
+                try:
+                    common_sqlite3.create_sql_table(finished_date_db_file, finished_date_db_conn, 'job', key_string, commit=False)
 
-                for job in date_bjobs_dic[finished_date].keys():
-                    # Insert sql table value if not exists.
-                    value_list = [job, date_bjobs_dic[finished_date][job]['job_name'], date_bjobs_dic[finished_date][job]['job_description'], date_bjobs_dic[finished_date][job]['user'], date_bjobs_dic[finished_date][job]['project'], date_bjobs_dic[finished_date][job]['status'], date_bjobs_dic[finished_date][job]['interactive_mode'], date_bjobs_dic[finished_date][job]['queue'], date_bjobs_dic[finished_date][job]['command'], date_bjobs_dic[finished_date][job]['submitted_from'], date_bjobs_dic[finished_date][job]['submitted_time'], date_bjobs_dic[finished_date][job]['cwd'], date_bjobs_dic[finished_date][job]['processors_requested'], date_bjobs_dic[finished_date][job]['requested_resources'], date_bjobs_dic[finished_date][job]['span_hosts'], date_bjobs_dic[finished_date][job]['rusage_mem'], date_bjobs_dic[finished_date][job]['started_on'], date_bjobs_dic[finished_date][job]['started_time'], date_bjobs_dic[finished_date][job]['finished_time'], date_bjobs_dic[finished_date][job]['exit_code'], date_bjobs_dic[finished_date][job]['term_signal'], date_bjobs_dic[finished_date][job]['cpu_time'], date_bjobs_dic[finished_date][job]['mem'], date_bjobs_dic[finished_date][job]['swap'], ' '.join(date_bjobs_dic[finished_date][job]['run_limit']), ' '.join(date_bjobs_dic[finished_date][job]['pids']), date_bjobs_dic[finished_date][job]['max_mem'], date_bjobs_dic[finished_date][job]['avg_mem'], ' '.join(date_bjobs_dic[finished_date][job]['pending_reasons']), date_bjobs_dic[finished_date][job]['job_info']]
-                    value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                    common_sqlite3.insert_into_sql_table(finished_date_db_file, finished_date_db_conn, 'job', value_string, commit=False)
+                    for job in date_bjobs_dic[finished_date].keys():
+                        # Insert sql table value if not exists.
+                        value_list = [job, date_bjobs_dic[finished_date][job]['job_name'], date_bjobs_dic[finished_date][job]['job_description'], date_bjobs_dic[finished_date][job]['user'], date_bjobs_dic[finished_date][job]['project'], date_bjobs_dic[finished_date][job]['status'], date_bjobs_dic[finished_date][job]['interactive_mode'], date_bjobs_dic[finished_date][job]['queue'], date_bjobs_dic[finished_date][job]['command'], date_bjobs_dic[finished_date][job]['submitted_from'], date_bjobs_dic[finished_date][job]['submitted_time'], date_bjobs_dic[finished_date][job]['cwd'], date_bjobs_dic[finished_date][job]['processors_requested'], date_bjobs_dic[finished_date][job]['requested_resources'], date_bjobs_dic[finished_date][job]['span_hosts'], date_bjobs_dic[finished_date][job]['rusage_mem'], date_bjobs_dic[finished_date][job]['started_on'], date_bjobs_dic[finished_date][job]['started_time'], date_bjobs_dic[finished_date][job]['finished_time'], date_bjobs_dic[finished_date][job]['exit_code'], date_bjobs_dic[finished_date][job]['term_signal'], date_bjobs_dic[finished_date][job]['cpu_time'], date_bjobs_dic[finished_date][job]['mem'], date_bjobs_dic[finished_date][job]['swap'], ' '.join(date_bjobs_dic[finished_date][job]['run_limit']), ' '.join(date_bjobs_dic[finished_date][job]['pids']), date_bjobs_dic[finished_date][job]['max_mem'], date_bjobs_dic[finished_date][job]['avg_mem'], ' '.join(date_bjobs_dic[finished_date][job]['pending_reasons']), date_bjobs_dic[finished_date][job]['job_info']]
+                        value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                        common_sqlite3.insert_into_sql_table(finished_date_db_file, finished_date_db_conn, 'job', value_string, commit=False)
 
-                finished_date_db_conn.commit()
-                finished_date_db_conn.close()
+                    finished_date_db_conn.commit()
+                finally:
+                    self._close_db_conn(finished_date_db_file, finished_date_db_conn)
 
         common.bprint(f'Done ({len(bjobs_dic.keys())} jobs).', date_format='%Y-%m-%d %H:%M:%S', indent=4)
 
@@ -227,35 +244,37 @@ class Sampling:
             (result, job_mem_db_conn) = common_sqlite3.connect_db_file(job_mem_db_file, mode='write')
 
             if result == 'passed':
-                job_table_list = common_sqlite3.get_sql_table_list(job_mem_db_file, job_mem_db_conn)
+                try:
+                    job_table_list = common_sqlite3.get_sql_table_list(job_mem_db_file, job_mem_db_conn)
 
-                for job in job_range_dic[job_range]:
-                    job_table_name = 'job_' + str(job)
+                    for job in job_range_dic[job_range]:
+                        job_table_name = 'job_' + str(job)
 
-                    # If job table (with old data) has been on the job_mem_db_file, cleanup it.
-                    if job_table_name in job_table_list:
-                        data_dic = common_sqlite3.get_sql_table_data(job_mem_db_file, job_mem_db_conn, job_table_name, ['sample_second'])
+                        # If job table (with old data) has been on the job_mem_db_file, cleanup it.
+                        if job_table_name in job_table_list:
+                            data_dic = common_sqlite3.get_sql_table_data(job_mem_db_file, job_mem_db_conn, job_table_name, ['sample_second'])
 
-                        if data_dic:
-                            if len(data_dic['sample_second']) > 0:
-                                last_sample_second = int(data_dic['sample_second'][-1])
+                            if data_dic:
+                                if len(data_dic['sample_second']) > 0:
+                                    last_sample_second = int(data_dic['sample_second'][-1])
 
-                                if self.sample_second - last_sample_second > 3600:
-                                    common.bprint(f'Table "{job_table_name}" already existed even one hour ago, will cleanup it.', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
-                                    common_sqlite3.cleanup_sql_table(job_mem_db_file, job_mem_db_conn, job_table_name, commit=False)
-                                    job_table_list.remove(job_table_name)
+                                    if self.sample_second - last_sample_second > 3600:
+                                        common.bprint(f'Table "{job_table_name}" already existed even one hour ago, will cleanup it.', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                                        common_sqlite3.cleanup_sql_table(job_mem_db_file, job_mem_db_conn, job_table_name, commit=False)
+                                        job_table_list.remove(job_table_name)
 
-                    # Generate sql table if not exitst.
-                    if job_table_name not in job_table_list:
-                        common_sqlite3.create_sql_table(job_mem_db_file, job_mem_db_conn, job_table_name, key_string, commit=False)
+                        # Generate sql table if not exitst.
+                        if job_table_name not in job_table_list:
+                            common_sqlite3.create_sql_table(job_mem_db_file, job_mem_db_conn, job_table_name, key_string, commit=False)
 
-                    # Insert sql table value.
-                    value_list = [self.sample_second, self.sample_time, bjobs_dic[job]['mem']]
-                    value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                    common_sqlite3.insert_into_sql_table(job_mem_db_file, job_mem_db_conn, job_table_name, value_string, commit=False)
+                        # Insert sql table value.
+                        value_list = [self.sample_second, self.sample_time, bjobs_dic[job]['mem']]
+                        value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                        common_sqlite3.insert_into_sql_table(job_mem_db_file, job_mem_db_conn, job_table_name, value_string, commit=False)
 
-                job_mem_db_conn.commit()
-                job_mem_db_conn.close()
+                    job_mem_db_conn.commit()
+                finally:
+                    self._close_db_conn(job_mem_db_file, job_mem_db_conn)
 
         common.bprint(f'Done ({len(job_list)} jobs).', date_format='%Y-%m-%d %H:%M:%S', indent=4)
 
@@ -269,51 +288,60 @@ class Sampling:
         (result, queue_db_conn) = common_sqlite3.connect_db_file(queue_db_file, mode='write')
 
         if result == 'passed':
-            queue_table_list = common_sqlite3.get_sql_table_list(queue_db_file, queue_db_conn)
-            bhosts_dic = common_lsf.get_bhosts_info()
-            queue_host_dic = common_lsf.get_queue_host_info()
-            bqueues_dic = common_lsf.get_bqueues_info()
-            queue_list = bqueues_dic['QUEUE_NAME']
-            queue_list.append('ALL')
+            try:
+                queue_table_list = common_sqlite3.get_sql_table_list(queue_db_file, queue_db_conn)
+                bhosts_dic = common_lsf.get_bhosts_info()
+                queue_host_dic = common_lsf.get_queue_host_info()
+                bqueues_dic = common_lsf.get_bqueues_info()
+                queue_list = bqueues_dic['QUEUE_NAME']
+                queue_list.append('ALL')
 
-            key_list = ['sample_second', 'sample_time', 'TOTAL', 'NJOBS', 'PEND', 'RUN', 'SUSP']
-            key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
-            key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
+                key_list = ['sample_second', 'sample_time', 'TOTAL', 'NJOBS', 'PEND', 'RUN', 'SUSP']
+                key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
+                key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
 
-            for i in range(len(queue_list)):
-                queue = queue_list[i]
-                queue_table_name = 'queue_' + str(queue)
+                for i in range(len(queue_list)):
+                    queue = queue_list[i]
+                    queue_table_name = 'queue_' + str(queue)
 
-                # Generate sql table if not exitst.
-                if queue_table_name not in queue_table_list:
-                    common_sqlite3.create_sql_table(queue_db_file, queue_db_conn, queue_table_name, key_string, commit=False)
+                    # Generate sql table if not exitst.
+                    if queue_table_name not in queue_table_list:
+                        common_sqlite3.create_sql_table(queue_db_file, queue_db_conn, queue_table_name, key_string, commit=False)
 
-                # Insert sql table value.
-                total_slots = 0
+                    # Insert sql table value.
+                    total_slots = 0
 
-                if queue == 'ALL':
-                    for max in bhosts_dic['MAX']:
-                        if re.match(r'^\d+$', max):
-                            total_slots += int(max)
+                    if queue == 'ALL':
+                        for max_slots in bhosts_dic['MAX']:
+                            if re.match(r'^\d+$', max_slots):
+                                total_slots += int(max_slots)
 
-                    value_list = [self.sample_second, self.sample_time, total_slots, sum([int(i) for i in bqueues_dic['NJOBS']]), sum([int(i) for i in bqueues_dic['PEND']]), sum([int(i) for i in bqueues_dic['RUN']]), sum([int(i) for i in bqueues_dic['SUSP']])]
-                elif queue == 'lost_and_found':
-                    value_list = [self.sample_second, self.sample_time, 'N/A', bqueues_dic['NJOBS'][i], bqueues_dic['PEND'][i], bqueues_dic['RUN'][i], bqueues_dic['SUSP'][i]]
-                else:
-                    for queue_host in queue_host_dic[queue]:
-                        host_index = bhosts_dic['HOST_NAME'].index(queue_host)
-                        host_max = bhosts_dic['MAX'][host_index]
+                        value_list = [self.sample_second, self.sample_time, total_slots, sum([int(i) for i in bqueues_dic['NJOBS']]), sum([int(i) for i in bqueues_dic['PEND']]), sum([int(i) for i in bqueues_dic['RUN']]), sum([int(i) for i in bqueues_dic['SUSP']])]
+                    elif queue == 'lost_and_found':
+                        value_list = [self.sample_second, self.sample_time, 'N/A', bqueues_dic['NJOBS'][i], bqueues_dic['PEND'][i], bqueues_dic['RUN'][i], bqueues_dic['SUSP'][i]]
+                    elif queue not in queue_host_dic:
+                        common.bprint(f'Queue "{queue}" not found in queue-host mapping, use "N/A" for TOTAL.', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                        value_list = [self.sample_second, self.sample_time, 'N/A', bqueues_dic['NJOBS'][i], bqueues_dic['PEND'][i], bqueues_dic['RUN'][i], bqueues_dic['SUSP'][i]]
+                    else:
+                        for queue_host in queue_host_dic[queue]:
+                            if queue_host not in bhosts_dic['HOST_NAME']:
+                                common.bprint(f'Queue "{queue}" host "{queue_host}" not found in host list, skip this host.', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                                continue
 
-                        if re.match(r'^\d+$', host_max):
-                            total_slots += int(host_max)
+                            host_index = bhosts_dic['HOST_NAME'].index(queue_host)
+                            host_max = bhosts_dic['MAX'][host_index]
 
-                    value_list = [self.sample_second, self.sample_time, total_slots, bqueues_dic['NJOBS'][i], bqueues_dic['PEND'][i], bqueues_dic['RUN'][i], bqueues_dic['SUSP'][i]]
+                            if re.match(r'^\d+$', host_max):
+                                total_slots += int(host_max)
 
-                value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                common_sqlite3.insert_into_sql_table(queue_db_file, queue_db_conn, queue_table_name, value_string, commit=False)
+                        value_list = [self.sample_second, self.sample_time, total_slots, bqueues_dic['NJOBS'][i], bqueues_dic['PEND'][i], bqueues_dic['RUN'][i], bqueues_dic['SUSP'][i]]
 
-            queue_db_conn.commit()
-            queue_db_conn.close()
+                    value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                    common_sqlite3.insert_into_sql_table(queue_db_file, queue_db_conn, queue_table_name, value_string, commit=False)
+
+                queue_db_conn.commit()
+            finally:
+                self._close_db_conn(queue_db_file, queue_db_conn)
 
     def sample_host_info(self):
         """
@@ -325,29 +353,31 @@ class Sampling:
         (result, host_db_conn) = common_sqlite3.connect_db_file(host_db_file, mode='write')
 
         if result == 'passed':
-            host_table_list = common_sqlite3.get_sql_table_list(host_db_file, host_db_conn)
-            bhosts_dic = common_lsf.get_bhosts_info()
-            host_list = bhosts_dic['HOST_NAME']
+            try:
+                host_table_list = common_sqlite3.get_sql_table_list(host_db_file, host_db_conn)
+                bhosts_dic = common_lsf.get_bhosts_info()
+                host_list = bhosts_dic['HOST_NAME']
 
-            key_list = ['sample_second', 'sample_time', 'NJOBS', 'RUN', 'SSUSP', 'USUSP']
-            key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
-            key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
+                key_list = ['sample_second', 'sample_time', 'NJOBS', 'RUN', 'SSUSP', 'USUSP']
+                key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
+                key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
 
-            for i in range(len(host_list)):
-                host = host_list[i]
-                host_table_name = 'host_' + str(host)
+                for i in range(len(host_list)):
+                    host = host_list[i]
+                    host_table_name = 'host_' + str(host)
 
-                # Generate sql table if not exists.
-                if host_table_name not in host_table_list:
-                    common_sqlite3.create_sql_table(host_db_file, host_db_conn, host_table_name, key_string, commit=False)
+                    # Generate sql table if not exists.
+                    if host_table_name not in host_table_list:
+                        common_sqlite3.create_sql_table(host_db_file, host_db_conn, host_table_name, key_string, commit=False)
 
-                # Insert sql table value.
-                value_list = [self.sample_second, self.sample_time, bhosts_dic['NJOBS'][i], bhosts_dic['RUN'][i], bhosts_dic['SSUSP'][i], bhosts_dic['USUSP'][i]]
-                value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                common_sqlite3.insert_into_sql_table(host_db_file, host_db_conn, host_table_name, value_string, commit=False)
+                    # Insert sql table value.
+                    value_list = [self.sample_second, self.sample_time, bhosts_dic['NJOBS'][i], bhosts_dic['RUN'][i], bhosts_dic['SSUSP'][i], bhosts_dic['USUSP'][i]]
+                    value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                    common_sqlite3.insert_into_sql_table(host_db_file, host_db_conn, host_table_name, value_string, commit=False)
 
-            host_db_conn.commit()
-            host_db_conn.close()
+                host_db_conn.commit()
+            finally:
+                self._close_db_conn(host_db_file, host_db_conn)
 
     def sample_load_info(self):
         """
@@ -359,55 +389,64 @@ class Sampling:
         (result, load_db_conn) = common_sqlite3.connect_db_file(load_db_file, mode='write')
 
         if result == 'passed':
-            load_table_list = common_sqlite3.get_sql_table_list(load_db_file, load_db_conn)
+            try:
+                load_table_list = common_sqlite3.get_sql_table_list(load_db_file, load_db_conn)
 
-            if self.tool == 'openlava':
-                lsload_dic = common_lsf.get_lsload_info(command='lsload -l')
-            else:
-                lsload_dic = common_lsf.get_lsload_info()
-
-            host_list = lsload_dic['HOST_NAME']
-
-            key_list = ['sample_second', 'sample_time', 'ut', 'tmp', 'swp', 'mem']
-            key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
-            key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
-
-            for i in range(len(host_list)):
-                host = host_list[i]
-                load_table_name = 'load_' + str(host)
-
-                # Generate sql table if not exists.
-                if load_table_name not in load_table_list:
-                    common_sqlite3.create_sql_table(load_db_file, load_db_conn, load_table_name, key_string, commit=False)
-
-                # Update "ut" value.
-                if not lsload_dic['ut'][i]:
-                    lsload_dic['ut'][i] = '0%'
+                if self.tool == 'openlava':
+                    lsload_dic = common_lsf.get_lsload_info(command='lsload -l')
                 else:
-                    ut = re.sub(r'%', '', lsload_dic['ut'][i])
+                    lsload_dic = common_lsf.get_lsload_info()
 
-                    if re.match(r'^\d+\.\d+$', ut):
-                        ut = str(int(float(ut)))
+                host_list = lsload_dic['HOST_NAME']
 
-                    if int(ut) > 100:
-                        ut = '100'
+                key_list = ['sample_second', 'sample_time', 'ut', 'tmp', 'swp', 'mem']
+                key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
+                key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
 
-                    lsload_dic['ut'][i] = str(ut) + '%'
+                for i in range(len(host_list)):
+                    host = host_list[i]
+                    load_table_name = 'load_' + str(host)
 
-                # Insert sql table value.
-                value_list = [self.sample_second, self.sample_time, lsload_dic['ut'][i], lsload_dic['tmp'][i], lsload_dic['swp'][i], lsload_dic['mem'][i]]
-                value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                common_sqlite3.insert_into_sql_table(load_db_file, load_db_conn, load_table_name, value_string, commit=False)
+                    # Generate sql table if not exists.
+                    if load_table_name not in load_table_list:
+                        common_sqlite3.create_sql_table(load_db_file, load_db_conn, load_table_name, key_string, commit=False)
 
-            load_db_conn.commit()
-            load_db_conn.close()
+                    # Update "ut" value.
+                    raw_ut = lsload_dic['ut'][i]
+
+                    if not raw_ut:
+                        normalized_ut = '0%'
+                    else:
+                        ut_without_percent = re.sub(r'%', '', raw_ut)
+
+                        if re.match(r'^\d+(\.\d+)?$', ut_without_percent):
+                            ut_value = int(float(ut_without_percent))
+
+                            if ut_value > 100:
+                                ut_value = 100
+
+                            normalized_ut = f'{ut_value}%'
+                        else:
+                            common.bprint(f'Invalid ut value "{raw_ut}" on host "{host}", use 0% instead.', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                            normalized_ut = '0%'
+
+                    lsload_dic['ut'][i] = normalized_ut
+
+                    # Insert sql table value.
+                    value_list = [self.sample_second, self.sample_time, lsload_dic['ut'][i], lsload_dic['tmp'][i], lsload_dic['swp'][i], lsload_dic['mem'][i]]
+                    value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                    common_sqlite3.insert_into_sql_table(load_db_file, load_db_conn, load_table_name, value_string, commit=False)
+
+                load_db_conn.commit()
+            finally:
+                self._close_db_conn(load_db_file, load_db_conn)
 
     def sample_user_info(self):
         """
         Sample user info.
         """
-        common.bprint('>>> Sampling job info ...', date_format='%Y-%m-%d %H:%M:%S')
-        common.bprint('* Getting finished job information with command "bjobs -u all -d -UF" ...', date_format='%Y-%m-%d %H:%M:%S', indent=4)
+        common.bprint('>>> Sampling user job info ...', date_format='%Y-%m-%d %H:%M:%S')
+        common.bprint('* Getting finished user job information with command "bjobs -u all -d -UF" ...', date_format='%Y-%m-%d %H:%M:%S', indent=4)
         bjobs_dic = common_lsf.get_bjobs_uf_info('bjobs -u all -d -UF')
 
         # Re-organize jobs_dic with finished_date.
@@ -432,23 +471,25 @@ class Sampling:
             (result, finished_date_db_conn) = common_sqlite3.connect_db_file(finished_date_db_file, mode='write')
 
             if result == 'passed':
-                user_table_list = common_sqlite3.get_sql_table_list(finished_date_db_file, finished_date_db_conn)
+                try:
+                    user_table_list = common_sqlite3.get_sql_table_list(finished_date_db_file, finished_date_db_conn)
 
-                for user in date_bjobs_dic[finished_date]:
-                    user_table_name = 'user_' + str(user)
+                    for user in date_bjobs_dic[finished_date]:
+                        user_table_name = 'user_' + str(user)
 
-                    # Generate sql table (user) if not exitst.
-                    if user_table_name not in user_table_list:
-                        common_sqlite3.create_sql_table(finished_date_db_file, finished_date_db_conn, user_table_name, key_string, commit=False)
+                        # Generate sql table (user) if not exitst.
+                        if user_table_name not in user_table_list:
+                            common_sqlite3.create_sql_table(finished_date_db_file, finished_date_db_conn, user_table_name, key_string, commit=False)
 
-                    for job in date_bjobs_dic[finished_date][user]:
-                        # Insert sql table value if not exists.
-                        value_list = [job, bjobs_dic[job]['status'], bjobs_dic[job]['queue'], bjobs_dic[job]['project'], bjobs_dic[job]['rusage_mem'], bjobs_dic[job]['max_mem']]
-                        value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                        common_sqlite3.insert_into_sql_table(finished_date_db_file, finished_date_db_conn, user_table_name, value_string, commit=False)
+                        for job in date_bjobs_dic[finished_date][user]:
+                            # Insert sql table value if not exists.
+                            value_list = [job, bjobs_dic[job]['status'], bjobs_dic[job]['queue'], bjobs_dic[job]['project'], bjobs_dic[job]['rusage_mem'], bjobs_dic[job]['max_mem']]
+                            value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                            common_sqlite3.insert_into_sql_table(finished_date_db_file, finished_date_db_conn, user_table_name, value_string, commit=False)
 
-                finished_date_db_conn.commit()
-                finished_date_db_conn.close()
+                    finished_date_db_conn.commit()
+                finally:
+                    self._close_db_conn(finished_date_db_file, finished_date_db_conn)
 
         common.bprint(f'Done ({len(bjobs_dic.keys())} jobs).', date_format='%Y-%m-%d %H:%M:%S', indent=4)
 
@@ -462,92 +503,94 @@ class Sampling:
         (result, utilization_db_conn) = common_sqlite3.connect_db_file(utilization_db_file, mode='write')
 
         if result == 'passed':
-            utilization_table_list = common_sqlite3.get_sql_table_list(utilization_db_file, utilization_db_conn)
-            bhosts_dic = common_lsf.get_bhosts_info()
-            lshosts_dic = common_lsf.get_lshosts_info()
+            try:
+                utilization_table_list = common_sqlite3.get_sql_table_list(utilization_db_file, utilization_db_conn)
+                bhosts_dic = common_lsf.get_bhosts_info()
+                lshosts_dic = common_lsf.get_lshosts_info()
 
-            if self.tool == 'openlava':
-                lsload_dic = common_lsf.get_lsload_info(command='lsload -l')
-            else:
-                lsload_dic = common_lsf.get_lsload_info()
+                if self.tool == 'openlava':
+                    lsload_dic = common_lsf.get_lsload_info(command='lsload -l')
+                else:
+                    lsload_dic = common_lsf.get_lsload_info()
 
-            host_list = lsload_dic['HOST_NAME']
+                host_list = lsload_dic['HOST_NAME']
 
-            key_list = ['sample_second', 'sample_time', 'slot', 'cpu', 'mem']
-            key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
-            key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
+                key_list = ['sample_second', 'sample_time', 'slot', 'cpu', 'mem']
+                key_type_list = ['INTEGER PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT', 'TEXT']
+                key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
 
-            for i in range(len(host_list)):
-                host = host_list[i]
-                utilization_table_name = 'utilization_' + str(host)
+                for i in range(len(host_list)):
+                    host = host_list[i]
+                    utilization_table_name = 'utilization_' + str(host)
 
-                # Generate sql table if not exists.
-                if utilization_table_name not in utilization_table_list:
-                    common_sqlite3.create_sql_table(utilization_db_file, utilization_db_conn, utilization_table_name, key_string, commit=False)
+                    # Generate sql table if not exists.
+                    if utilization_table_name not in utilization_table_list:
+                        common_sqlite3.create_sql_table(utilization_db_file, utilization_db_conn, utilization_table_name, key_string, commit=False)
 
-                # Get slot_utilization.
-                slot_utilization = 0
+                    # Get slot_utilization.
+                    slot_utilization = 0
 
-                for (j, host_name) in enumerate(bhosts_dic['HOST_NAME']):
-                    if (host_name == host) and re.match(r'^\d+$', bhosts_dic['NJOBS'][j]) and re.match(r'^\d+$', bhosts_dic['MAX'][j]) and (int(bhosts_dic['MAX'][j]) != 0):
-                        slot_utilization = round(int(bhosts_dic['NJOBS'][j])/int(bhosts_dic['MAX'][j])*100, 1)
+                    for (j, host_name) in enumerate(bhosts_dic['HOST_NAME']):
+                        if (host_name == host) and re.match(r'^\d+$', bhosts_dic['NJOBS'][j]) and re.match(r'^\d+$', bhosts_dic['MAX'][j]) and (int(bhosts_dic['MAX'][j]) != 0):
+                            slot_utilization = round(int(bhosts_dic['NJOBS'][j])/int(bhosts_dic['MAX'][j])*100, 1)
 
-                        if int(slot_utilization) > 100:
-                            common.bprint(f'For host "{host}", invalid slot utilization "{slot_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                            if int(slot_utilization) > 100:
+                                common.bprint(f'For host "{host}", invalid slot utilization "{slot_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
 
-                            if bhosts_dic['STATUS'][j] == 'unavail':
-                                slot_utilization = 0.0
-                            else:
-                                slot_utilization = 100.0
+                                if bhosts_dic['STATUS'][j] == 'unavail':
+                                    slot_utilization = 0.0
+                                else:
+                                    slot_utilization = 100.0
 
-                        break
+                            break
 
-                # Get cpu_utilization.
-                cpu_utilization = 0
+                    # Get cpu_utilization.
+                    cpu_utilization = 0
 
-                if re.match(r'^\d+%$', lsload_dic['ut'][i]):
-                    cpu_utilization = re.sub('%', '', lsload_dic['ut'][i])
+                    if re.match(r'^\d+%$', lsload_dic['ut'][i]):
+                        cpu_utilization = re.sub('%', '', lsload_dic['ut'][i])
 
-                # Get mem_utilization.
-                mem_utilization = 0
+                    # Get mem_utilization.
+                    mem_utilization = 0
 
-                for (k, host_name) in enumerate(lshosts_dic['HOST_NAME']):
-                    if (host_name == host) and re.match(r'^(\d+(\.\d+)?)([MGT])$', lshosts_dic['maxmem'][k]) and re.match(r'^(\d+(\.\d+)?)([MGT])$', lsload_dic['mem'][i]):
-                        # Get maxmem with MB.
-                        maxmem_match = re.match(r'^(\d+(\.\d+)?)([MGT])$', lshosts_dic['maxmem'][k])
-                        maxmem = float(maxmem_match.group(1))
-                        maxmem_unit = maxmem_match.group(3)
+                    for (k, host_name) in enumerate(lshosts_dic['HOST_NAME']):
+                        if (host_name == host) and re.match(r'^(\d+(\.\d+)?)([MGT])$', lshosts_dic['maxmem'][k]) and re.match(r'^(\d+(\.\d+)?)([MGT])$', lsload_dic['mem'][i]):
+                            # Get maxmem with MB.
+                            maxmem_match = re.match(r'^(\d+(\.\d+)?)([MGT])$', lshosts_dic['maxmem'][k])
+                            maxmem = float(maxmem_match.group(1))
+                            maxmem_unit = maxmem_match.group(3)
 
-                        if maxmem_unit == 'G':
-                            maxmem = maxmem*1024
-                        elif maxmem_unit == 'T':
-                            maxmem = maxmem*1024*1024
+                            if maxmem_unit == 'G':
+                                maxmem = maxmem*1024
+                            elif maxmem_unit == 'T':
+                                maxmem = maxmem*1024*1024
 
-                        # Get mem with MB.
-                        mem_match = re.match(r'^(\d+(\.\d+)?)([MGT])$', lsload_dic['mem'][i])
-                        mem = float(mem_match.group(1))
-                        mem_unit = mem_match.group(3)
+                            # Get mem with MB.
+                            mem_match = re.match(r'^(\d+(\.\d+)?)([MGT])$', lsload_dic['mem'][i])
+                            mem = float(mem_match.group(1))
+                            mem_unit = mem_match.group(3)
 
-                        if mem_unit == 'G':
-                            mem = mem*1024
-                        elif mem_unit == 'T':
-                            mem = mem*1024*1024
+                            if mem_unit == 'G':
+                                mem = mem*1024
+                            elif mem_unit == 'T':
+                                mem = mem*1024*1024
 
-                        mem_utilization = round((maxmem-mem)*100/maxmem, 1)
+                            mem_utilization = round((maxmem-mem)*100/maxmem, 1)
 
-                        if int(mem_utilization) > 100:
-                            common.bprint(f'For host "{host}", invalid mem utilization "{mem_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
-                            mem_utilization = 100.0
+                            if int(mem_utilization) > 100:
+                                common.bprint(f'For host "{host}", invalid mem utilization "{mem_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                                mem_utilization = 100.0
 
-                        break
+                            break
 
-                # Insert sql table value.
-                value_list = [self.sample_second, self.sample_time, slot_utilization, cpu_utilization, mem_utilization]
-                value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                common_sqlite3.insert_into_sql_table(utilization_db_file, utilization_db_conn, utilization_table_name, value_string, commit=False)
+                    # Insert sql table value.
+                    value_list = [self.sample_second, self.sample_time, slot_utilization, cpu_utilization, mem_utilization]
+                    value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                    common_sqlite3.insert_into_sql_table(utilization_db_file, utilization_db_conn, utilization_table_name, value_string, commit=False)
 
-            utilization_db_conn.commit()
-            utilization_db_conn.close()
+                utilization_db_conn.commit()
+            finally:
+                self._close_db_conn(utilization_db_file, utilization_db_conn)
 
     def get_utilization_day_info(self):
         """
@@ -562,44 +605,47 @@ class Sampling:
         select_condition = f"WHERE sample_second BETWEEN '{begin_second}' AND '{end_second}'"
 
         utilization_db_file = str(self.db_path) + '/utilization.db'
-        (result, utilization_db_conn) = common_sqlite3.connect_db_file(utilization_db_file, mode='write')
+        (result, utilization_db_conn) = common_sqlite3.connect_db_file(utilization_db_file, mode='read')
 
         if result == 'passed':
-            utilization_table_list = common_sqlite3.get_sql_table_list(utilization_db_file, utilization_db_conn)
+            try:
+                utilization_table_list = common_sqlite3.get_sql_table_list(utilization_db_file, utilization_db_conn)
 
-            for utilization_table_name in utilization_table_list:
-                # Get current day issued/in_use/utilization from sqlite3 database.
-                utilization_db_data_dic = common_sqlite3.get_sql_table_data(utilization_db_file, utilization_db_conn, utilization_table_name, ['slot', 'cpu', 'mem'], select_condition)
+                for utilization_table_name in utilization_table_list:
+                    # Get current day issued/in_use/utilization from sqlite3 database.
+                    utilization_db_data_dic = common_sqlite3.get_sql_table_data(utilization_db_file, utilization_db_conn, utilization_table_name, ['slot', 'cpu', 'mem'], select_condition)
 
-                if utilization_db_data_dic:
-                    # Get slot_sum/cpu_sum/mem_sum info.
-                    slot_utilization_sum = 0
-                    cpu_utilization_sum = 0
-                    mem_utilization_sum = 0
+                    if utilization_db_data_dic:
+                        # Get slot_sum/cpu_sum/mem_sum info.
+                        slot_utilization_sum = 0
+                        cpu_utilization_sum = 0
+                        mem_utilization_sum = 0
 
-                    for (i, slot) in enumerate(utilization_db_data_dic['slot']):
-                        slot_utilization_sum += float(utilization_db_data_dic['slot'][i])
-                        cpu_utilization_sum += float(utilization_db_data_dic['cpu'][i])
-                        mem_utilization_sum += float(utilization_db_data_dic['mem'][i])
+                        for (i, slot) in enumerate(utilization_db_data_dic['slot']):
+                            slot_utilization_sum += float(utilization_db_data_dic['slot'][i])
+                            cpu_utilization_sum += float(utilization_db_data_dic['cpu'][i])
+                            mem_utilization_sum += float(utilization_db_data_dic['mem'][i])
 
-                    # Get slot_avg/cpu_avg/mem_avg utilizaiton info.
-                    slot_avg_utilization = round(slot_utilization_sum/len(utilization_db_data_dic['slot']), 1)
-                    cpu_avg_utilization = round(cpu_utilization_sum/len(utilization_db_data_dic['slot']), 1)
-                    mem_avg_utilization = round(mem_utilization_sum/len(utilization_db_data_dic['slot']), 1)
+                        # Get slot_avg/cpu_avg/mem_avg utilizaiton info.
+                        slot_avg_utilization = round(slot_utilization_sum/len(utilization_db_data_dic['slot']), 1)
+                        cpu_avg_utilization = round(cpu_utilization_sum/len(utilization_db_data_dic['slot']), 1)
+                        mem_avg_utilization = round(mem_utilization_sum/len(utilization_db_data_dic['slot']), 1)
 
-                    if int(slot_avg_utilization) > 100:
-                        common.bprint(f'For db table "{utilization_table_name}", invalid slot average utilization "{slot_avg_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
-                        slot_avg_utilization = 100.0
+                        if int(slot_avg_utilization) > 100:
+                            common.bprint(f'For db table "{utilization_table_name}", invalid slot average utilization "{slot_avg_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                            slot_avg_utilization = 100.0
 
-                    if int(cpu_avg_utilization) > 100:
-                        common.bprint(f'For db table "{utilization_table_name}", invalid cpu average utilization "{cpu_avg_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
-                        cpu_avg_utilization = 100.0
+                        if int(cpu_avg_utilization) > 100:
+                            common.bprint(f'For db table "{utilization_table_name}", invalid cpu average utilization "{cpu_avg_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                            cpu_avg_utilization = 100.0
 
-                    if int(mem_avg_utilization) > 100:
-                        common.bprint(f'For db table "{utilization_table_name}", invalid mem average utilization "{mem_avg_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
-                        mem_avg_utilization = 100.0
+                        if int(mem_avg_utilization) > 100:
+                            common.bprint(f'For db table "{utilization_table_name}", invalid mem average utilization "{mem_avg_utilization}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning', indent=4)
+                            mem_avg_utilization = 100.0
 
-                    utilization_day_dic[utilization_table_name] = {'slot': slot_avg_utilization, 'cpu': cpu_avg_utilization, 'mem': mem_avg_utilization}
+                        utilization_day_dic[utilization_table_name] = {'slot': slot_avg_utilization, 'cpu': cpu_avg_utilization, 'mem': mem_avg_utilization}
+            finally:
+                self._close_db_conn(utilization_db_file, utilization_db_conn)
 
         return utilization_day_dic
 
@@ -613,42 +659,44 @@ class Sampling:
         (result, utilization_day_db_conn) = common_sqlite3.connect_db_file(utilization_day_db_file, mode='write')
 
         if result == 'passed':
-            utilization_day_table_list = common_sqlite3.get_sql_table_list(utilization_day_db_file, utilization_day_db_conn)
-            utilization_day_dic = self.get_utilization_day_info()
+            try:
+                utilization_day_table_list = common_sqlite3.get_sql_table_list(utilization_day_db_file, utilization_day_db_conn)
+                utilization_day_dic = self.get_utilization_day_info()
 
-            key_list = ['sample_date', 'slot', 'cpu', 'mem']
-            key_type_list = ['TEXT PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT']
-            key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
+                key_list = ['sample_date', 'slot', 'cpu', 'mem']
+                key_type_list = ['TEXT PRIMARY KEY', 'TEXT', 'TEXT', 'TEXT']
+                key_string = common_sqlite3.gen_sql_table_key_string(key_list, key_type_list)
 
-            for (utilization_day_table_name, utilization_day_table_dic) in utilization_day_dic.items():
-                host = re.sub('utilization_', '', utilization_day_table_name)
-                common.bprint(f'Counting utilization (day average) info for host "{host}" ...', date_format='%Y-%m-%d %H:%M:%S', indent=4)
+                for (utilization_day_table_name, utilization_day_table_dic) in utilization_day_dic.items():
+                    host = re.sub('utilization_', '', utilization_day_table_name)
+                    common.bprint(f'Counting utilization (day average) info for host "{host}" ...', date_format='%Y-%m-%d %H:%M:%S', indent=4)
 
-                # Generate sql table.
-                if utilization_day_table_name not in utilization_day_table_list:
-                    common_sqlite3.create_sql_table(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, key_string, commit=False)
+                    # Generate sql table.
+                    if utilization_day_table_name not in utilization_day_table_list:
+                        common_sqlite3.create_sql_table(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, key_string, commit=False)
 
-                    # Insert sql table value.
-                    value_list = [self.sample_date, utilization_day_table_dic['slot'], utilization_day_table_dic['cpu'], utilization_day_table_dic['mem']]
-                    value_string = common_sqlite3.gen_sql_table_value_string(value_list)
-                    common_sqlite3.insert_into_sql_table(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, value_string, commit=False)
-                else:
-                    select_condition = "WHERE sample_date='" + str(self.sample_date) + "'"
-                    utilization_day_db_data_dic = common_sqlite3.get_sql_table_data(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, ['slot', 'cpu', 'mem'], select_condition)
-
-                    if utilization_day_db_data_dic:
-                        # Replace sql table value.
-                        set_condition = "SET slot='" + str(utilization_day_table_dic['slot']) + "', cpu='" + str(utilization_day_table_dic['cpu']) + "', mem='" + str(utilization_day_table_dic['mem']) + "'"
-                        where_condition = "WHERE sample_date='" + str(self.sample_date) + "'"
-                        common_sqlite3.update_sql_table_data(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, set_condition, where_condition, commit=False)
-                    else:
                         # Insert sql table value.
                         value_list = [self.sample_date, utilization_day_table_dic['slot'], utilization_day_table_dic['cpu'], utilization_day_table_dic['mem']]
                         value_string = common_sqlite3.gen_sql_table_value_string(value_list)
                         common_sqlite3.insert_into_sql_table(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, value_string, commit=False)
+                    else:
+                        select_condition = "WHERE sample_date='" + str(self.sample_date) + "'"
+                        utilization_day_db_data_dic = common_sqlite3.get_sql_table_data(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, ['slot', 'cpu', 'mem'], select_condition)
 
-            utilization_day_db_conn.commit()
-            utilization_day_db_conn.close()
+                        if utilization_day_db_data_dic:
+                            # Replace sql table value.
+                            set_condition = "SET slot='" + str(utilization_day_table_dic['slot']) + "', cpu='" + str(utilization_day_table_dic['cpu']) + "', mem='" + str(utilization_day_table_dic['mem']) + "'"
+                            where_condition = "WHERE sample_date='" + str(self.sample_date) + "'"
+                            common_sqlite3.update_sql_table_data(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, set_condition, where_condition, commit=False)
+                        else:
+                            # Insert sql table value.
+                            value_list = [self.sample_date, utilization_day_table_dic['slot'], utilization_day_table_dic['cpu'], utilization_day_table_dic['mem']]
+                            value_string = common_sqlite3.gen_sql_table_value_string(value_list)
+                            common_sqlite3.insert_into_sql_table(utilization_day_db_file, utilization_day_db_conn, utilization_day_table_name, value_string, commit=False)
+
+                utilization_day_db_conn.commit()
+            finally:
+                self._close_db_conn(utilization_day_db_file, utilization_day_db_conn)
 
     def sampling(self):
         # Cleanup.
@@ -698,8 +746,17 @@ class Sampling:
             p.start()
             process_list.append(p)
 
+        failed_processes = []
+
         for process in process_list:
             process.join()
+
+            if process.exitcode != 0:
+                failed_processes.append((process.pid, process.exitcode))
+                common.bprint(f'Sampling subprocess pid={process.pid} exited with code {process.exitcode}.', date_format='%Y-%m-%d %H:%M:%S', level='Error', indent=4)
+
+        if failed_processes:
+            sys.exit(1)
 
 
 #################

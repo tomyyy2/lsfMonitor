@@ -320,6 +320,10 @@ class MainWindow(QMainWindow):
     def switch_tab(self, specified_tab):
         """
         Switch to the specified Tab.
+
+        Note:
+        LICENSE tab may not exist for non-admin users. In that case, fallback
+        to JOBS to avoid selecting a non-existing tab.
         """
         tab_dic = {'JOB': self.job_tab,
                    'JOBS': self.jobs_tab,
@@ -327,10 +331,16 @@ class MainWindow(QMainWindow):
                    'LOAD': self.load_tab,
                    'USERS': self.users_tab,
                    'QUEUES': self.queues_tab,
-                   'UTILIZATION': self.utilization_tab,
-                   'LICENSE': self.license_tab}
+                   'UTILIZATION': self.utilization_tab}
 
-        self.main_tab.setCurrentWidget(tab_dic[specified_tab])
+        license_tab_available = self.main_tab.indexOf(self.license_tab) != -1
+
+        if license_tab_available:
+            tab_dic['LICENSE'] = self.license_tab
+
+        target_tab_key = runtime_utils.resolve_switch_tab(specified_tab, license_tab_available=license_tab_available)
+        target_tab = tab_dic.get(target_tab_key, self.jobs_tab)
+        self.main_tab.setCurrentWidget(target_tab)
 
     def gen_menubar(self):
         """
@@ -2074,7 +2084,7 @@ Please contact with liyanqing1987@163.com with any question."""
         maxmem_list.sort()
 
         for (i, maxmem) in enumerate(maxmem_list):
-            if maxmem == '0':
+            if maxmem == 0:
                 maxmem_list[i] = '-'
             else:
                 maxmem_list[i] = str(maxmem) + 'G'
@@ -3112,7 +3122,7 @@ Please contact with liyanqing1987@163.com with any question."""
             (queue_db_file_connect_result, queue_db_conn) = common_sqlite3.connect_db_file(queue_db_file)
 
             if queue_db_file_connect_result == 'failed':
-                common.bprint(f'Failed on connecting queue database file "{self.queue_db_file}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
+                common.bprint(f'Failed on connecting queue database file "{queue_db_file}".', date_format='%Y-%m-%d %H:%M:%S', level='Warning')
             else:
                 for queue in queue_list:
                     table_name = 'queue_' + str(queue)

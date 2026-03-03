@@ -30,3 +30,20 @@ def resolve_monitor_tab(jobid=None, user='', feature='', explicit_tab=''):
         return 'LICENSE'
 
     return 'JOBS'
+
+
+def resolve_switch_tab(specified_tab, license_tab_available=False):
+    """Resolve a safe target tab key for ``MainWindow.switch_tab``.
+
+    ``LICENSE`` is optional in UI runtime. If the tab is not present
+    (non-admin user), fallback to ``JOBS``.
+    """
+    available_tabs = {'JOB', 'JOBS', 'HOSTS', 'LOAD', 'USERS', 'QUEUES', 'UTILIZATION'}
+
+    if license_tab_available:
+        available_tabs.add('LICENSE')
+
+    if specified_tab in available_tabs:
+        return specified_tab
+
+    return 'JOBS'
