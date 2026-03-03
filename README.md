@@ -51,6 +51,23 @@ Notes:
 - `advise` gives a simple `rusage[mem]` range suggestion for a specified job.
 - If LSF environment is not available, `lsfmon` will report a clear setup error.
 
+## Admin CLI (M2 management overview)
+`lsfmon.py` also provides an administrator-focused CLI:
+
+- `lsfmon mgmt overview --range <Nd|Nw|Nm|Ny>`
+- `lsfmon mgmt trend --range 7d|30d|90d [--export csv]`
+- `lsfmon report weekly --range 7d --export csv,md`
+
+### M2: enhanced overview key metrics
+`lsfmon mgmt overview --range ...` now prints core operational metrics in one block:
+
+- Job success rate
+- Memory waste rate (based on `rusage_mem` vs `max_mem`)
+- Queue average waiting time (based on `submitted_time` and `started_time`)
+- Slot/CPU/MEM utilization (range average)
+
+If optional source columns are missing, the command degrades gracefully and prints `N/A` instead of failing.
+
 ## Configuration
 After installing the tool, come into <LSFMONITOR_INSTALL_PATH>/monitor/conf directory,
 then update file config.py for your own configuration.

@@ -337,3 +337,69 @@ def test_mgmt_overview_degrades_core_metrics_when_optional_columns_missing(tmp_p
     assert "Memory waste rate       : N/A" in out
     assert "Queue avg waiting time  : N/A" in out
     assert "Slot/CPU/MEM utilization: N/A / N/A / N/A" in out
+
+
+def test_mgmt_overview_wait_time_can_show_seconds(tmp_path, capsys):
+    job_dir = tmp_path / "job"
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(job_dir / "20260303.db"))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE job (
+                job TEXT PRIMARY KEY,
+                status TEXT,
+                rusage_mem TEXT,
+                max_mem TEXT,
+                submitted_time TEXT,
+                started_time TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO job VALUES (?, ?, ?, ?, ?, ?)",
+            ("j1", "DONE", "100", "80", "2026-03-03 10:00:00", "2026-03-03 10:00:30"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    rc = lsfmon.main(["--db-path", str(tmp_path), "mgmt", "overview", "--range", "3650d"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "Queue avg waiting time  : 30.0 sec" in out
+
+
+def test_mgmt_overview_memory_waste_rate_clamps_negative_values(tmp_path, capsys):
+    job_dir = tmp_path / "job"
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(str(job_dir / "20260303.db"))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE job (
+                job TEXT PRIMARY KEY,
+                status TEXT,
+                rusage_mem TEXT,
+                max_mem TEXT,
+                submitted_time TEXT,
+                started_time TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO job VALUES (?, ?, ?, ?, ?, ?)",
+            ("j1", "DONE", "100", "150", "2026-03-03 10:00:00", "2026-03-03 10:10:00"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    rc = lsfmon.main(["--db-path", str(tmp_path), "mgmt", "overview", "--range", "3650d"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "Memory waste rate       : 0.0%" in out
