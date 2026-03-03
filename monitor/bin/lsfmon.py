@@ -67,6 +67,12 @@ config = _load_config()
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog='lsfmon', description='lsfMonitor engineer CLI (M1 MVP).')
+    parser.add_argument(
+        '--db-path',
+        default=str(getattr(config, 'db_path', LSFMONITOR_INSTALL_PATH / 'db')),
+        help='Path to sqlite database root. Default: user/local config db_path.',
+    )
+
     subparsers = parser.add_subparsers(dest='command')
     subparsers.required = True
 
@@ -147,8 +153,11 @@ def _print_table(headers: list[str], rows: list[list[str]]) -> None:
         print('  '.join(str(cell).ljust(widths[index]) for index, cell in enumerate(row)))
 
 
-def _resolve_db_path(cluster: str) -> Path:
-    db_root = Path(getattr(config, 'db_path', str(LSFMONITOR_INSTALL_PATH / 'db')))
+def _resolve_db_path(cluster: str, db_root_override: str | None = None) -> Path:
+    if db_root_override:
+        db_root = Path(db_root_override).expanduser()
+    else:
+        db_root = Path(getattr(config, 'db_path', str(LSFMONITOR_INSTALL_PATH / 'db')))
 
     if cluster:
         return db_root / cluster
@@ -253,7 +262,7 @@ def _handle_my_mem(args, _tool: str, cluster: str) -> int:
         return 1
 
     user = getpass.getuser()
-    db_path = _resolve_db_path(cluster)
+    db_path = _resolve_db_path(cluster, args.db_path)
     user_db_path = db_path / 'user'
     table_name = f'user_{user}'
     date_list = _iter_recent_dates(args.days)

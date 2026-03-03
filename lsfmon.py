@@ -1401,27 +1401,6 @@ def _first_top_level_command(argv: List[str]) -> Optional[str]:
     return None
 
 
-def _strip_admin_global_args(argv: List[str]) -> List[str]:
-    normalized: List[str] = []
-    index = 0
-
-    while index < len(argv):
-        token = str(argv[index]).strip()
-
-        if token == "--db-path":
-            index += 2
-            continue
-
-        if token.startswith("--db-path="):
-            index += 1
-            continue
-
-        normalized.append(argv[index])
-        index += 1
-
-    return normalized
-
-
 def _delegate_to_engineer_cli(argv: List[str]) -> int:
     engineer_cli = Path(__file__).resolve().parent / "monitor" / "bin" / "lsfmon.py"
 
@@ -1442,7 +1421,7 @@ def _delegate_to_engineer_cli(argv: List[str]) -> int:
         _friendly_print(f"Error: engineer CLI entry has no callable main(): {engineer_cli}")
         return 1
 
-    return int(delegate_main(_strip_admin_global_args(list(argv))))
+    return int(delegate_main(list(argv)))
 
 
 def build_parser() -> argparse.ArgumentParser:
