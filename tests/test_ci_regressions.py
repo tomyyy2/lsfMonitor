@@ -39,3 +39,10 @@ def test_ci_keeps_manual_verifier_for_runtime_and_pytest_fallback():
     assert 'if python -c "import pytest"; then' in text
     assert "::warning::pytest environment unavailable, fallback to manual verification script." in text
     assert text.count(manual_verify_cmd) >= 2
+
+
+def test_ci_runs_full_pytest_suite_for_report_export_regressions():
+    text = _read_ci_workflow()
+
+    # Keep full-suite invocation to ensure new report-export-center tests are executed.
+    assert "pytest -q" in text

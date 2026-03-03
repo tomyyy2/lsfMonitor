@@ -399,12 +399,71 @@ def verify_lsfmon_weekly_report_exports():
         assert '## 异常TOP项' in md_text
 
 
+def verify_bmonitor_report_export_history_roundtrip():
+    bmonitor = load_bmonitor_module()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_root = Path(tmp_dir) / 'db_root'
+        output_dir = Path(tmp_dir) / 'reports'
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+        window.db_path = str(db_root)
+        window.select_report_output_dir = lambda: str(output_dir)
+
+        warning_messages = []
+        window.gui_warning = lambda message: warning_messages.append(message)
+
+        info_messages = []
+        original_information = getattr(bmonitor.QMessageBox, 'information', None)
+        bmonitor.QMessageBox.information = staticmethod(lambda *_args: info_messages.append(_args[2]))
+
+        original_run = bmonitor.subprocess.run
+
+        try:
+            def _success_run(command, stdout=None, stderr=None, text=None):
+                (output_dir / 'lsfmon_weekly_20260303.csv').write_text('date,jobs_total\n', encoding='utf-8')
+                (output_dir / 'lsfmon_weekly_metrics_20260303.csv').write_text('metric,value,note\n', encoding='utf-8')
+                (output_dir / 'lsfmon_weekly_anomaly_top_20260303.csv').write_text('rank,date\n', encoding='utf-8')
+                (output_dir / 'lsfmon_weekly_20260303.md').write_text('# Weekly\n', encoding='utf-8')
+                return types.SimpleNamespace(returncode=0, stdout='ok', stderr='')
+
+            bmonitor.subprocess.run = _success_run
+            window.export_weekly_summary_report_bundle()
+
+            assert warning_messages == []
+            assert len(info_messages) == 1
+            success_records = window.load_recent_report_export_history(limit=10)
+            assert len(success_records) == 4
+            assert all(record.get('status') == 'SUCCESS' for record in success_records)
+
+            bmonitor.subprocess.run = lambda *_args, **_kwargs: types.SimpleNamespace(
+                returncode=1,
+                stdout='',
+                stderr='mock export failure',
+            )
+            window.export_weekly_summary_report_bundle()
+
+            assert len(warning_messages) == 1
+            failure_record = window.load_recent_report_export_history(limit=1)[0]
+            assert failure_record.get('status') == 'FAILED'
+            assert failure_record.get('message') == 'mock export failure'
+        finally:
+            bmonitor.subprocess.run = original_run
+
+            if original_information is None:
+                delattr(bmonitor.QMessageBox, 'information')
+            else:
+                bmonitor.QMessageBox.information = original_information
+
+
 def main():
     verify_runtime_utils()
     verify_cli_argument_parsing()
     verify_sampling_join_all_processes()
     verify_get_utilization_day_info_close()
     verify_lsfmon_weekly_report_exports()
+    verify_bmonitor_report_export_history_roundtrip()
     print('OK: recent runtime changes verified.')
 
 
