@@ -4395,9 +4395,9 @@ Please contact with liyanqing1987@163.com with any question."""
 
         QMessageBox.information(self, 'Report Export History', message)
 
-    def _collect_weekly_report_exports(self, output_dir):
+    def _collect_weekly_report_exports(self, output_dir, start_ts=None):
         """
-        Collect newest weekly export files for GUI confirmation.
+        Collect weekly export files generated in current command run.
         """
         pattern_list = [
             'lsfmon_weekly_[0-9]*.csv',
@@ -4409,7 +4409,18 @@ Please contact with liyanqing1987@163.com with any question."""
         exported_file_list = []
 
         for pattern in pattern_list:
-            matched_file_list = sorted(output_dir.glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True)
+            matched_file_list = []
+
+            for matched_file in output_dir.glob(pattern):
+                if start_ts is not None:
+                    # Some filesystems only keep second-level mtime precision,
+                    # so allow a 1-second tolerance around command start.
+                    if matched_file.stat().st_mtime < (start_ts - 1.0):
+                        continue
+
+                matched_file_list.append(matched_file)
+
+            matched_file_list = sorted(matched_file_list, key=lambda item: item.stat().st_mtime, reverse=True)
 
             if matched_file_list:
                 exported_file_list.append(matched_file_list[0])
@@ -4431,6 +4442,8 @@ Please contact with liyanqing1987@163.com with any question."""
             f'Export weekly summary with command: {" ".join(command_list)}',
             date_format='%Y-%m-%d %H:%M:%S'
         )
+
+        command_start_ts = time.time()
 
         try:
             completed = subprocess.run(command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -4455,7 +4468,7 @@ Please contact with liyanqing1987@163.com with any question."""
             self.gui_warning(f'Failed to export weekly summary: {error_message}')
             return
 
-        exported_file_list = self._collect_weekly_report_exports(Path(output_dir))
+        exported_file_list = self._collect_weekly_report_exports(Path(output_dir), start_ts=command_start_ts)
 
         if exported_file_list:
             for exported_file in exported_file_list:
@@ -4464,8 +4477,14 @@ Please contact with liyanqing1987@163.com with any question."""
 
             message = 'Weekly summary exported successfully:\n' + '\n'.join(str(item) for item in exported_file_list)
         else:
-            self.append_report_export_history(export_type='weekly_summary', export_path=output_dir)
-            message = f'Weekly summary command finished.\nOutput directory: {output_dir}'
+            no_export_message = '无新导出（No new export generated）'
+            self.append_report_export_history(
+                export_type='weekly_summary',
+                export_path=output_dir,
+                status='NO_EXPORT',
+                message=no_export_message,
+            )
+            message = f'{no_export_message}.\nOutput directory: {output_dir}'
 
         QMessageBox.information(self, 'Report Export Center', message)
 

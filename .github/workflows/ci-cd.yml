@@ -72,7 +72,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run tests (pytest preferred, fallback to manual verifier)
+      - name: Install test dependencies
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+
+          if [ -f requirements.txt ]; then
+            if python -m pip install -r requirements.txt; then
+              echo "Installed dependencies from requirements.txt"
+            else
+              echo "::warning::requirements.txt install failed in test job, continuing with explicit test dependency install."
+            fi
+          fi
+
+          python -m pip install pytest pytest-cov
+      - name: Run tests (pytest primary, manual verifier fallback)
         env:
           LSFMONITOR_INSTALL_PATH: ${{ github.workspace }}
           HOME: ${{ github.workspace }}
@@ -82,7 +96,7 @@ jobs:
           if python -c "import pytest"; then
             pytest -q
           else
-            echo "::warning::pytest environment unavailable, fallback to manual verification script."
+            echo "::warning::pytest unavailable after dependency install, fallback to manual verification script."
             python tests/manual_verify_recent_changes.py
           fi
 

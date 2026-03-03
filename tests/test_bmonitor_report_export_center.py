@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import types
 import uuid
@@ -207,6 +208,64 @@ def test_export_weekly_summary_report_bundle_success(monkeypatch, tmp_path):
         'lsfmon_weekly_anomaly_top_20260303.csv',
         'lsfmon_weekly_20260303.md',
     }
+
+
+def test_export_weekly_summary_report_bundle_no_new_export(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    output_dir = tmp_path / 'reports'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    stale_file_list = [
+        output_dir / 'lsfmon_weekly_20260228.csv',
+        output_dir / 'lsfmon_weekly_metrics_20260228.csv',
+        output_dir / 'lsfmon_weekly_anomaly_top_20260228.csv',
+        output_dir / 'lsfmon_weekly_20260228.md',
+    ]
+
+    for stale_file in stale_file_list:
+        stale_file.write_text('stale\n', encoding='utf-8')
+        stale_file.touch()
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+    window.select_report_output_dir = lambda: str(output_dir)
+
+    warning_messages = []
+    window.gui_warning = lambda message: warning_messages.append(message)
+
+    information_messages = []
+    monkeypatch.setattr(
+        bmonitor.QMessageBox,
+        'information',
+        lambda *_args: information_messages.append(_args[2]),
+        raising=False,
+    )
+
+    monkeypatch.setattr(bmonitor.time, 'time', lambda: 2000.0)
+
+    for stale_file in stale_file_list:
+        # Keep historical files older than command start time.
+        os.utime(stale_file, (1000.0, 1000.0))
+
+    monkeypatch.setattr(
+        bmonitor.subprocess,
+        'run',
+        lambda *_args, **_kwargs: types.SimpleNamespace(returncode=0, stdout='ok', stderr=''),
+    )
+
+    window.export_weekly_summary_report_bundle()
+
+    assert warning_messages == []
+    assert len(information_messages) == 1
+    assert '无新导出' in information_messages[0]
+
+    history_records = _read_history_records(window)
+    assert len(history_records) == 1
+    assert history_records[0]['type'] == 'weekly_summary'
+    assert history_records[0]['status'] == 'NO_EXPORT'
+    assert 'No new export generated' in history_records[0]['message']
+
 
 
 def test_export_weekly_summary_report_bundle_failure(monkeypatch, tmp_path):

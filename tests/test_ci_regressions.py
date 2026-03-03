@@ -30,6 +30,15 @@ def test_ci_build_verify_creates_conf_before_bsample_help_check():
     assert text.index(conf_write) < text.index(bsample_help)
 
 
+def test_ci_test_job_explicitly_installs_pytest_dependencies():
+    text = _read_ci_workflow()
+
+    assert "- name: Install test dependencies" in text
+    assert "python -m pip install --upgrade pip" in text
+    assert "python -m pip install pytest pytest-cov" in text
+    assert "::warning::requirements.txt install failed in test job, continuing with explicit test dependency install." in text
+
+
 def test_ci_keeps_manual_verifier_for_runtime_and_pytest_fallback():
     text = _read_ci_workflow()
 
@@ -37,7 +46,7 @@ def test_ci_keeps_manual_verifier_for_runtime_and_pytest_fallback():
 
     assert "python -m compileall monitor memPrediction lsfmon.py tests/manual_verify_recent_changes.py" in text
     assert 'if python -c "import pytest"; then' in text
-    assert "::warning::pytest environment unavailable, fallback to manual verification script." in text
+    assert "::warning::pytest unavailable after dependency install, fallback to manual verification script." in text
     assert text.count(manual_verify_cmd) >= 2
 
 
