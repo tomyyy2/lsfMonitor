@@ -42,9 +42,19 @@ jobs:
       - name: Verify install and core entry help
         env:
           LSFMONITOR_INSTALL_PATH: ${{ github.workspace }}
+          HOME: ${{ github.workspace }}
         run: |
-          # Defensive install: bsample imports pandas at module import time.
-          python -m pip install pandas
+          # Prepare CI-local config for bsample/bmonitor import path:
+          # they prefer $HOME/.lsfMonitor/conf/config.py.
+          mkdir -p "$HOME/.lsfMonitor/conf"
+          cat > "$HOME/.lsfMonitor/conf/config.py" <<'PYCONF'
+          db_path = "./db"
+          license_administrators = "all"
+          lmstat_path = ""
+          lmstat_bsub_command = ""
+          excluded_license_servers = ""
+          PYCONF
+
           python install.py -h
           python monitor/bin/bsample.py -h
       - name: Runtime behavior dry-run verification (stdlib only)
