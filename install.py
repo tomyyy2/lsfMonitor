@@ -48,6 +48,7 @@ class Installation():
         self.force_mode = force_mode
         self.install_memPrediction = install_memPrediction
         self.tool_list = [
+            'monitor/bin/lsfmon',
             'monitor/bin/bmonitor',
             'monitor/bin/bsample',
             'monitor/tools/akill',
