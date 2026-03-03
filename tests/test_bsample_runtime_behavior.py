@@ -6,6 +6,8 @@ import types
 import uuid
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 BSAMPLE_PATH = ROOT / 'monitor' / 'bin' / 'bsample.py'
 
@@ -85,6 +87,8 @@ def test_sampling_joins_every_started_process(monkeypatch):
             self.target = target
             self.started = False
             self.joined = False
+            self.exitcode = 0
+            self.pid = 1000 + len(FakeProcess.instances)
             FakeProcess.instances.append(self)
 
         def start(self):
@@ -104,6 +108,40 @@ def test_sampling_joins_every_started_process(monkeypatch):
 
     assert len(FakeProcess.instances) == 3
     assert all(process.started for process in FakeProcess.instances)
+    assert all(process.joined for process in FakeProcess.instances)
+
+
+def test_sampling_exits_when_any_subprocess_failed(monkeypatch):
+    bsample = _load_bsample_module(monkeypatch)
+
+    class FakeProcess:
+        instances = []
+
+        def __init__(self, target):
+            self.target = target
+            self.started = False
+            self.joined = False
+            self.pid = 2000 + len(FakeProcess.instances)
+            # Mark the 2nd process as failed.
+            self.exitcode = 0 if len(FakeProcess.instances) == 0 else 2
+            FakeProcess.instances.append(self)
+
+        def start(self):
+            self.started = True
+
+        def join(self):
+            self.joined = True
+
+    monkeypatch.setattr(bsample, 'Process', FakeProcess)
+
+    sampling = _build_sampling_instance(bsample)
+    sampling.job_sampling = True
+    sampling.host_sampling = True
+
+    with pytest.raises(SystemExit) as exc_info:
+        sampling.sampling()
+
+    assert exc_info.value.code == 1
     assert all(process.joined for process in FakeProcess.instances)
 
 

@@ -15,9 +15,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BSAMPLE_PATH = ROOT / 'monitor' / 'bin' / 'bsample.py'
+BMONITOR_PATH = ROOT / 'monitor' / 'bin' / 'bmonitor.py'
+RUNTIME_UTILS_PATH = ROOT / 'monitor' / 'common' / 'runtime_utils.py'
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+class _Dummy:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+def _load_runtime_utils_module(module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, RUNTIME_UTILS_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_bsample_module():
@@ -62,6 +77,106 @@ def load_bsample_module():
     return module
 
 
+def load_bmonitor_module():
+    os.environ['LSFMONITOR_INSTALL_PATH'] = str(ROOT)
+    os.environ['HOME'] = str(ROOT)
+
+    qdarkstyle_mod = types.ModuleType('qdarkstyle')
+    qdarkstyle_mod.load_stylesheet_pyqt5 = lambda: ''
+
+    pyqt5_mod = types.ModuleType('PyQt5')
+    qtcore_mod = types.ModuleType('PyQt5.QtCore')
+    qtcore_mod.QDate = _Dummy
+    qtcore_mod.Qt = types.SimpleNamespace()
+    qtcore_mod.QThread = _Dummy
+
+    qtgui_mod = types.ModuleType('PyQt5.QtGui')
+    qtgui_mod.QBrush = _Dummy
+    qtgui_mod.QFont = _Dummy
+    qtgui_mod.QIcon = _Dummy
+
+    qtwidgets_mod = types.ModuleType('PyQt5.QtWidgets')
+    for name in [
+        'QAction',
+        'QApplication',
+        'QDateEdit',
+        'QFileDialog',
+        'QFrame',
+        'QGridLayout',
+        'QHeaderView',
+        'QLabel',
+        'QLineEdit',
+        'QMainWindow',
+        'QMenu',
+        'QMessageBox',
+        'QPushButton',
+        'QTabWidget',
+        'QTableWidget',
+        'QTableWidgetItem',
+        'QTextEdit',
+        'QWidget',
+    ]:
+        setattr(qtwidgets_mod, name, _Dummy)
+
+    qtwidgets_mod.qApp = types.SimpleNamespace(quit=lambda: None)
+
+    common_pkg = types.ModuleType('common')
+    common_mod = types.ModuleType('common.common')
+    common_mod.bprint = lambda *args, **kwargs: None
+    common_mod.create_dir = lambda *args, **kwargs: None
+    common_mod.SaveLog = _Dummy
+
+    common_lsf_mod = types.ModuleType('common.common_lsf')
+    common_lsf_mod.get_lsid_info = lambda: ('LSF', '10.1', 'cluster', 'master')
+
+    common_license_mod = types.ModuleType('common.common_license')
+    common_pyqt5_mod = types.ModuleType('common.common_pyqt5')
+    common_sqlite3_mod = types.ModuleType('common.common_sqlite3')
+
+    runtime_utils_mod = _load_runtime_utils_module(f'_manual_runtime_utils_{uuid.uuid4().hex}')
+
+    common_pkg.common = common_mod
+    common_pkg.common_lsf = common_lsf_mod
+    common_pkg.common_license = common_license_mod
+    common_pkg.common_pyqt5 = common_pyqt5_mod
+    common_pkg.common_sqlite3 = common_sqlite3_mod
+    common_pkg.runtime_utils = runtime_utils_mod
+
+    conf_pkg = types.ModuleType('conf')
+    config_mod = types.ModuleType('conf.config')
+    config_mod.db_path = str(ROOT / 'db')
+    config_mod.license_administrators = ''
+    config_mod.excluded_license_servers = ''
+    config_mod.lmstat_path = ''
+    config_mod.lmstat_bsub_command = ''
+    conf_pkg.config = config_mod
+
+    sys.modules['qdarkstyle'] = qdarkstyle_mod
+    sys.modules['PyQt5'] = pyqt5_mod
+    sys.modules['PyQt5.QtCore'] = qtcore_mod
+    sys.modules['PyQt5.QtGui'] = qtgui_mod
+    sys.modules['PyQt5.QtWidgets'] = qtwidgets_mod
+
+    sys.modules['common'] = common_pkg
+    sys.modules['common.common'] = common_mod
+    sys.modules['common.common_lsf'] = common_lsf_mod
+    sys.modules['common.common_license'] = common_license_mod
+    sys.modules['common.common_pyqt5'] = common_pyqt5_mod
+    sys.modules['common.common_sqlite3'] = common_sqlite3_mod
+    sys.modules['common.runtime_utils'] = runtime_utils_mod
+
+    sys.modules['conf'] = conf_pkg
+    sys.modules['conf.config'] = config_mod
+
+    module_name = f'_manual_bmonitor_{uuid.uuid4().hex}'
+    spec = importlib.util.spec_from_file_location(module_name, BMONITOR_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(module)
+
+    return module
+
+
 def build_sampling_instance(bsample):
     sampling = bsample.Sampling.__new__(bsample.Sampling)
     sampling.cleanup = False
@@ -98,6 +213,31 @@ def verify_runtime_utils():
     assert resolve_switch_tab('UNKNOWN', license_tab_available=True) == 'JOBS'
 
 
+def verify_cli_argument_parsing():
+    original_argv = sys.argv[:]
+
+    try:
+        bsample = load_bsample_module()
+        sys.argv = ['bsample.py', '-UD']
+        assert bsample.read_args() == (False, False, False, False, False, False, False, False, True)
+
+        sys.argv = ['bsample.py']
+        try:
+            bsample.read_args()
+            raise AssertionError('bsample.read_args() should exit when no sampling flags are provided.')
+        except SystemExit as error:
+            assert error.code == 1
+
+        bmonitor = load_bmonitor_module()
+        sys.argv = ['bmonitor.py', '-j', '123', '-t', 'HOSTS']
+        assert bmonitor.read_args() == (123, '', '', 'HOSTS', False, False)
+
+        sys.argv = ['bmonitor.py', '-f', 'verdi']
+        assert bmonitor.read_args() == (None, '', 'verdi', 'LICENSE', False, False)
+    finally:
+        sys.argv = original_argv
+
+
 def verify_sampling_join_all_processes():
     bsample = load_bsample_module()
 
@@ -108,6 +248,8 @@ def verify_sampling_join_all_processes():
             self.target = target
             self.started = False
             self.joined = False
+            self.exitcode = 0
+            self.pid = 1000 + len(FakeProcess.instances)
             FakeProcess.instances.append(self)
 
         def start(self):
@@ -160,6 +302,7 @@ def verify_get_utilization_day_info_close():
 
 def main():
     verify_runtime_utils()
+    verify_cli_argument_parsing()
     verify_sampling_join_all_processes()
     verify_get_utilization_day_info_close()
     print('OK: recent runtime changes verified.')
