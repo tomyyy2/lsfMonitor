@@ -15,7 +15,7 @@ jobs:
           python-version: "3.12"
       - name: Syntax compile check
         run: |
-          python -m compileall monitor memPrediction
+          python -m compileall monitor memPrediction lsfmon.py tests/manual_verify_recent_changes.py
 
   build-verify:
     runs-on: ubuntu-latest

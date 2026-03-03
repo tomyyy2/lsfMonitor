@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sqlite3
 import sys
+import tempfile
+import time
 import types
 import uuid
 from pathlib import Path
@@ -300,11 +303,108 @@ def verify_get_utilization_day_info_close():
     assert utilization_day_dic['utilization_hostA'] == {'slot': 15.0, 'cpu': 50.0, 'mem': 80.0}
 
 
+def verify_lsfmon_weekly_report_exports():
+    import lsfmon
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_root = Path(tmp_dir)
+        now_ts = int(time.time())
+
+        conn = sqlite3.connect(str(db_root / 'queue.db'))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE queue_ALL (
+                    sample_second INTEGER PRIMARY KEY,
+                    sample_time TEXT,
+                    TOTAL TEXT,
+                    NJOBS TEXT,
+                    PEND TEXT,
+                    RUN TEXT,
+                    SUSP TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO queue_ALL VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (now_ts - 3600, '20260303_100000', '200', '90', '30', '60', '0'),
+            )
+            conn.execute(
+                "INSERT INTO queue_ALL VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (now_ts, '20260303_110000', '200', '120', '40', '80', '0'),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        conn = sqlite3.connect(str(db_root / 'utilization_day.db'))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE utilization_hostA (
+                    sample_date TEXT PRIMARY KEY,
+                    slot TEXT,
+                    cpu TEXT,
+                    mem TEXT
+                )
+                """
+            )
+            conn.execute("INSERT INTO utilization_hostA VALUES ('20260302', '71.1', '65.2', '62.3')")
+            conn.execute("INSERT INTO utilization_hostA VALUES ('20260303', '75.0', '69.0', '66.0')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        job_dir = db_root / 'job'
+        job_dir.mkdir(parents=True, exist_ok=True)
+        for day, statuses in {
+            '20260302': ['DONE', 'EXIT', 'DONE'],
+            '20260303': ['DONE', 'DONE', 'EXIT', 'DONE'],
+        }.items():
+            conn = sqlite3.connect(str(job_dir / f'{day}.db'))
+            try:
+                conn.execute('CREATE TABLE job (job TEXT PRIMARY KEY, status TEXT)')
+                for idx, status in enumerate(statuses):
+                    conn.execute('INSERT INTO job (job, status) VALUES (?, ?)', (f'{day}_{idx}', status))
+                conn.commit()
+            finally:
+                conn.close()
+
+        output_dir = db_root / 'reports'
+        rc = lsfmon.main(
+            [
+                '--db-path',
+                str(db_root),
+                'report',
+                'weekly',
+                '--range',
+                '3650d',
+                '--export',
+                'csv,md',
+                '--output-dir',
+                str(output_dir),
+            ]
+        )
+
+        assert rc == 0
+        assert len(list(output_dir.glob('lsfmon_weekly_[0-9]*.csv'))) == 1
+        assert len(list(output_dir.glob('lsfmon_weekly_metrics_*.csv'))) == 1
+        assert len(list(output_dir.glob('lsfmon_weekly_anomaly_top_*.csv'))) == 1
+
+        md_files = list(output_dir.glob('lsfmon_weekly_*.md'))
+        assert len(md_files) == 1
+
+        md_text = md_files[0].read_text(encoding='utf-8')
+        assert '## 关键指标表 (Key Metrics)' in md_text
+        assert '## 异常TOP项' in md_text
+
+
 def main():
     verify_runtime_utils()
     verify_cli_argument_parsing()
     verify_sampling_join_all_processes()
     verify_get_utilization_day_info_close()
+    verify_lsfmon_weekly_report_exports()
     print('OK: recent runtime changes verified.')
 
 
