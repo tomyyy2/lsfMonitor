@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import importlib.util
 import os
 import re
 import sqlite3
@@ -1374,6 +1375,76 @@ def _cmd_report_weekly(args: argparse.Namespace) -> int:
     return 0
 
 
+_ENGINEER_COMMANDS = {"my", "advise"}
+
+
+def _first_top_level_command(argv: List[str]) -> Optional[str]:
+    index = 0
+
+    while index < len(argv):
+        token = str(argv[index]).strip()
+
+        if token == "--db-path":
+            index += 2
+            continue
+
+        if token.startswith("--db-path="):
+            index += 1
+            continue
+
+        if token.startswith("-"):
+            index += 1
+            continue
+
+        return token
+
+    return None
+
+
+def _strip_admin_global_args(argv: List[str]) -> List[str]:
+    normalized: List[str] = []
+    index = 0
+
+    while index < len(argv):
+        token = str(argv[index]).strip()
+
+        if token == "--db-path":
+            index += 2
+            continue
+
+        if token.startswith("--db-path="):
+            index += 1
+            continue
+
+        normalized.append(argv[index])
+        index += 1
+
+    return normalized
+
+
+def _delegate_to_engineer_cli(argv: List[str]) -> int:
+    engineer_cli = Path(__file__).resolve().parent / "monitor" / "bin" / "lsfmon.py"
+
+    if not engineer_cli.exists():
+        _friendly_print(f"Error: engineer CLI entry not found: {engineer_cli}")
+        return 1
+
+    spec = importlib.util.spec_from_file_location("_lsfmon_engineer_cli", engineer_cli)
+    if spec is None or spec.loader is None:
+        _friendly_print(f"Error: failed to load engineer CLI entry: {engineer_cli}")
+        return 1
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    delegate_main = getattr(module, "main", None)
+    if not callable(delegate_main):
+        _friendly_print(f"Error: engineer CLI entry has no callable main(): {engineer_cli}")
+        return 1
+
+    return int(delegate_main(_strip_admin_global_args(list(argv))))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lsfmon")
     parser.add_argument(
@@ -1412,8 +1483,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    argv_list = list(argv) if argv is not None else list(sys.argv[1:])
+    first_command = _first_top_level_command(argv_list)
+
+    if first_command in _ENGINEER_COMMANDS:
+        return _delegate_to_engineer_cli(argv_list)
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv_list)
 
     handler = getattr(args, "handler", None)
     if not handler:

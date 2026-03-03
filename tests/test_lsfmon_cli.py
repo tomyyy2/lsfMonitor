@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LSFMON_PATH = ROOT / 'monitor' / 'bin' / 'lsfmon.py'
+ADMIN_LSFMON_PATH = ROOT / 'lsfmon.py'
 
 
 def _load_lsfmon_module(monkeypatch, lsid_info=('LSF', '10.1', 'clusterA', 'masterA')):
@@ -160,3 +161,42 @@ def test_advise_job_prints_memory_suggestion(monkeypatch, capsys):
     assert rc == 0
     assert 'Job: 123' in captured.out
     assert 'Suggested rusage[mem]' in captured.out
+
+
+def test_engineer_entrypoint_can_delegate_admin_commands(monkeypatch, tmp_path, capsys):
+    lsfmon = _load_lsfmon_module(monkeypatch)
+
+    rc = lsfmon.main(['--db-path', str(tmp_path), 'mgmt', 'overview', '--range', '7d'])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert '[lsfmon] Management overview' in captured.out
+    assert 'No data found in sqlite database for this range.' in captured.out
+
+
+def test_admin_entrypoint_can_delegate_engineer_commands(monkeypatch, capsys):
+    _load_lsfmon_module(monkeypatch)
+    common_lsf_mod = sys.modules['common.common_lsf']
+
+    common_lsf_mod.get_bjobs_info = lambda **kwargs: {
+        'JOBID': ['123'],
+        'USER': ['alice'],
+        'STAT': ['RUN'],
+        'QUEUE': ['normal'],
+        'EXEC_HOST': ['host01'],
+        'JOB_NAME': ['demo_job'],
+        'SUBMIT_TIME': ['Mar 03 11:20'],
+    }
+
+    module_name = f'_test_admin_lsfmon_{uuid.uuid4().hex}'
+    spec = importlib.util.spec_from_file_location(module_name, ADMIN_LSFMON_PATH)
+    admin_lsfmon = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(admin_lsfmon)
+
+    rc = admin_lsfmon.main(['--db-path', str(ROOT / 'db'), 'my', 'jobs'])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert 'Active jobs: 1' in captured.out
+    assert 'demo_job' in captured.out

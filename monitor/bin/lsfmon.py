@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import getpass
+import importlib.util
 import os
 import statistics
 import sys
@@ -403,9 +404,64 @@ def _handle_advise(args, _tool: str, _cluster: str) -> int:
     return 0
 
 
+_ADMIN_COMMANDS = {'mgmt', 'report'}
+
+
+def _first_top_level_command(argv: list[str]) -> str | None:
+    index = 0
+
+    while index < len(argv):
+        token = str(argv[index]).strip()
+
+        if token == '--db-path':
+            index += 2
+            continue
+
+        if token.startswith('--db-path='):
+            index += 1
+            continue
+
+        if token.startswith('-'):
+            index += 1
+            continue
+
+        return token
+
+    return None
+
+
+def _delegate_to_admin_cli(argv: list[str]) -> int:
+    admin_cli = LSFMONITOR_INSTALL_PATH / 'lsfmon.py'
+
+    if not admin_cli.exists():
+        print(f'Error: admin CLI entry not found: {admin_cli}', file=sys.stderr)
+        return 1
+
+    spec = importlib.util.spec_from_file_location('_lsfmon_admin_cli', admin_cli)
+    if spec is None or spec.loader is None:
+        print(f'Error: failed to load admin CLI entry: {admin_cli}', file=sys.stderr)
+        return 1
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    delegate_main = getattr(module, 'main', None)
+    if not callable(delegate_main):
+        print(f'Error: admin CLI entry has no callable main(): {admin_cli}', file=sys.stderr)
+        return 1
+
+    return int(delegate_main(list(argv)))
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv_list = list(argv) if argv is not None else list(sys.argv[1:])
+    first_command = _first_top_level_command(argv_list)
+
+    if first_command in _ADMIN_COMMANDS:
+        return _delegate_to_admin_cli(argv_list)
+
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv_list)
 
     tool, cluster = _ensure_lsf_environment()
 
