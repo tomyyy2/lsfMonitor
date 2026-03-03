@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+import types
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+BMONITOR_PATH = ROOT / 'monitor' / 'bin' / 'bmonitor.py'
+RUNTIME_UTILS_PATH = ROOT / 'monitor' / 'common' / 'runtime_utils.py'
+
+
+class _Dummy:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+def _load_runtime_utils_module(module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, RUNTIME_UTILS_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _install_bmonitor_stubs(monkeypatch):
+    monkeypatch.setenv('LSFMONITOR_INSTALL_PATH', str(ROOT))
+    monkeypatch.setenv('HOME', str(ROOT))
+
+    qdarkstyle_mod = types.ModuleType('qdarkstyle')
+    qdarkstyle_mod.load_stylesheet_pyqt5 = lambda: ''
+
+    pyqt5_mod = types.ModuleType('PyQt5')
+    qtcore_mod = types.ModuleType('PyQt5.QtCore')
+    qtcore_mod.QDate = _Dummy
+    qtcore_mod.Qt = types.SimpleNamespace()
+    qtcore_mod.QThread = _Dummy
+
+    qtgui_mod = types.ModuleType('PyQt5.QtGui')
+    qtgui_mod.QBrush = _Dummy
+    qtgui_mod.QFont = _Dummy
+    qtgui_mod.QIcon = _Dummy
+
+    qtwidgets_mod = types.ModuleType('PyQt5.QtWidgets')
+    for name in [
+        'QAction',
+        'QApplication',
+        'QDateEdit',
+        'QFileDialog',
+        'QFrame',
+        'QGridLayout',
+        'QHeaderView',
+        'QLabel',
+        'QLineEdit',
+        'QMainWindow',
+        'QMenu',
+        'QMessageBox',
+        'QPushButton',
+        'QTabWidget',
+        'QTableWidget',
+        'QTableWidgetItem',
+        'QTextEdit',
+        'QWidget',
+    ]:
+        setattr(qtwidgets_mod, name, _Dummy)
+
+    qtwidgets_mod.qApp = types.SimpleNamespace(quit=lambda: None)
+
+    common_pkg = types.ModuleType('common')
+    common_mod = types.ModuleType('common.common')
+    common_mod.bprint = lambda *args, **kwargs: None
+    common_mod.create_dir = lambda *args, **kwargs: None
+    common_mod.SaveLog = _Dummy
+
+    common_lsf_mod = types.ModuleType('common.common_lsf')
+    common_lsf_mod.get_lsid_info = lambda: ('LSF', '10.1', 'cluster', 'master')
+
+    common_license_mod = types.ModuleType('common.common_license')
+    common_pyqt5_mod = types.ModuleType('common.common_pyqt5')
+    common_sqlite3_mod = types.ModuleType('common.common_sqlite3')
+
+    runtime_utils_mod = _load_runtime_utils_module(f'_test_runtime_utils_{uuid.uuid4().hex}')
+
+    common_pkg.common = common_mod
+    common_pkg.common_lsf = common_lsf_mod
+    common_pkg.common_license = common_license_mod
+    common_pkg.common_pyqt5 = common_pyqt5_mod
+    common_pkg.common_sqlite3 = common_sqlite3_mod
+    common_pkg.runtime_utils = runtime_utils_mod
+
+    conf_pkg = types.ModuleType('conf')
+    config_mod = types.ModuleType('conf.config')
+    config_mod.db_path = str(ROOT / 'db')
+    config_mod.license_administrators = 'all'
+    config_mod.excluded_license_servers = ''
+    config_mod.lmstat_path = ''
+    config_mod.lmstat_bsub_command = ''
+    conf_pkg.config = config_mod
+
+    monkeypatch.setitem(sys.modules, 'qdarkstyle', qdarkstyle_mod)
+    monkeypatch.setitem(sys.modules, 'PyQt5', pyqt5_mod)
+    monkeypatch.setitem(sys.modules, 'PyQt5.QtCore', qtcore_mod)
+    monkeypatch.setitem(sys.modules, 'PyQt5.QtGui', qtgui_mod)
+    monkeypatch.setitem(sys.modules, 'PyQt5.QtWidgets', qtwidgets_mod)
+
+    monkeypatch.setitem(sys.modules, 'common', common_pkg)
+    monkeypatch.setitem(sys.modules, 'common.common', common_mod)
+    monkeypatch.setitem(sys.modules, 'common.common_lsf', common_lsf_mod)
+    monkeypatch.setitem(sys.modules, 'common.common_license', common_license_mod)
+    monkeypatch.setitem(sys.modules, 'common.common_pyqt5', common_pyqt5_mod)
+    monkeypatch.setitem(sys.modules, 'common.common_sqlite3', common_sqlite3_mod)
+    monkeypatch.setitem(sys.modules, 'common.runtime_utils', runtime_utils_mod)
+
+    monkeypatch.setitem(sys.modules, 'conf', conf_pkg)
+    monkeypatch.setitem(sys.modules, 'conf.config', config_mod)
+
+
+def _load_bmonitor_module(monkeypatch):
+    _install_bmonitor_stubs(monkeypatch)
+
+    module_name = f'_test_bmonitor_report_{uuid.uuid4().hex}'
+    spec = importlib.util.spec_from_file_location(module_name, BMONITOR_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_build_weekly_report_command_contains_required_flags(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+
+    command = window.build_weekly_report_command(tmp_path)
+
+    assert command[0] == sys.executable
+    assert command[1].endswith('lsfmon.py')
+    assert '--db-path' in command
+    assert '--export' in command
+    assert command[command.index('--export') + 1] == 'csv,md'
+    assert command[command.index('--range') + 1] == '7d'
+
+
+def test_export_weekly_summary_report_bundle_success(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    output_dir = tmp_path / 'reports'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+    window.select_report_output_dir = lambda: str(output_dir)
+
+    warning_messages = []
+    window.gui_warning = lambda message: warning_messages.append(message)
+
+    information_messages = []
+    monkeypatch.setattr(
+        bmonitor.QMessageBox,
+        'information',
+        lambda *_args: information_messages.append(_args[2]),
+        raising=False,
+    )
+
+    captured_command = {}
+
+    def _fake_run(command, stdout=None, stderr=None, text=None):
+        captured_command['value'] = command
+
+        (output_dir / 'lsfmon_weekly_20260303.csv').write_text('date,jobs_total\n', encoding='utf-8')
+        (output_dir / 'lsfmon_weekly_metrics_20260303.csv').write_text('metric,value,note\n', encoding='utf-8')
+        (output_dir / 'lsfmon_weekly_anomaly_top_20260303.csv').write_text('rank,date\n', encoding='utf-8')
+        (output_dir / 'lsfmon_weekly_20260303.md').write_text('# Weekly\n', encoding='utf-8')
+
+        return types.SimpleNamespace(returncode=0, stdout='ok', stderr='')
+
+    monkeypatch.setattr(bmonitor.subprocess, 'run', _fake_run)
+
+    window.export_weekly_summary_report_bundle()
+
+    assert warning_messages == []
+    assert '--export' in captured_command['value']
+    assert captured_command['value'][captured_command['value'].index('--export') + 1] == 'csv,md'
+    assert len(information_messages) == 1
+    assert 'Weekly summary exported successfully' in information_messages[0]
+
+
+def test_export_weekly_summary_report_bundle_failure(monkeypatch, tmp_path):
+    bmonitor = _load_bmonitor_module(monkeypatch)
+
+    output_dir = tmp_path / 'reports'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    window = bmonitor.MainWindow.__new__(bmonitor.MainWindow)
+    window.db_path = str(tmp_path / 'db_root')
+    window.select_report_output_dir = lambda: str(output_dir)
+
+    warning_messages = []
+    window.gui_warning = lambda message: warning_messages.append(message)
+
+    monkeypatch.setattr(
+        bmonitor.subprocess,
+        'run',
+        lambda *_args, **_kwargs: types.SimpleNamespace(returncode=1, stdout='', stderr='mock export failure'),
+    )
+
+    window.export_weekly_summary_report_bundle()
+
+    assert len(warning_messages) == 1
+    assert 'Failed to export weekly summary' in warning_messages[0]
+    assert 'mock export failure' in warning_messages[0]

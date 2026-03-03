@@ -9,6 +9,7 @@ import copy
 import getpass
 import argparse
 import datetime
+import subprocess
 from pathlib import Path
 
 # Third-party imports
@@ -196,6 +197,12 @@ class MainWindow(QMainWindow):
 
         return tool, cluster
 
+    def is_license_admin_user(self):
+        """
+        Check whether current user has administrator-level menu permissions.
+        """
+        return ('all' in self.license_administrator_list) or ('ALL' in self.license_administrator_list) or (USER in self.license_administrator_list)
+
     def fresh_lsf_info(self, lsf_info):
         """
         Get LSF information with functions on common_lsf.
@@ -219,7 +226,7 @@ class MainWindow(QMainWindow):
         if self.disable_license:
             return
 
-        if ('all' not in self.license_administrator_list) and ('ALL' not in self.license_administrator_list) and (USER not in self.license_administrator_list):
+        if not self.is_license_admin_user():
             return
 
         # Setup default license update waiting time.
@@ -377,6 +384,10 @@ class MainWindow(QMainWindow):
         export_license_expires_table_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
         export_license_expires_table_action.triggered.connect(self.export_license_expires_table)
 
+        export_weekly_summary_action = QAction('Report export center (weekly summary csv+md)', self)
+        export_weekly_summary_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/save.png'))
+        export_weekly_summary_action.triggered.connect(self.export_weekly_summary_report_bundle)
+
         exit_action = QAction('Exit', self)
         exit_action.setIcon(QIcon(str(os.environ['LSFMONITOR_INSTALL_PATH']) + '/data/pictures/exit.png'))
         exit_action.triggered.connect(qApp.quit)
@@ -389,6 +400,11 @@ class MainWindow(QMainWindow):
         file_menu.addAction(export_utilization_table_action)
         file_menu.addAction(export_license_feature_table_action)
         file_menu.addAction(export_license_expires_table_action)
+
+        if self.is_license_admin_user():
+            file_menu.addSeparator()
+            file_menu.addAction(export_weekly_summary_action)
+
         file_menu.addAction(exit_action)
 
         # Setup
@@ -4264,6 +4280,91 @@ Please contact with liyanqing1987@163.com with any question."""
 # For license TAB (end) #
 
 # Export table (start) #
+    def select_report_output_dir(self):
+        """
+        Ask user to choose output directory for report exports.
+        """
+        default_dir = str(Path(self.db_path).resolve())
+        return QFileDialog.getExistingDirectory(self, 'Select report output directory', default_dir)
+
+    def build_weekly_report_command(self, output_dir):
+        """
+        Build command for one-click weekly summary export.
+        """
+        lsfmon_cli = LSFMONITOR_INSTALL_PATH / 'lsfmon.py'
+
+        return [
+            sys.executable,
+            str(lsfmon_cli),
+            '--db-path',
+            str(self.db_path),
+            'report',
+            'weekly',
+            '--range',
+            '7d',
+            '--export',
+            'csv,md',
+            '--output-dir',
+            str(output_dir),
+        ]
+
+    def _collect_weekly_report_exports(self, output_dir):
+        """
+        Collect newest weekly export files for GUI confirmation.
+        """
+        pattern_list = [
+            'lsfmon_weekly_[0-9]*.csv',
+            'lsfmon_weekly_metrics_*.csv',
+            'lsfmon_weekly_anomaly_top_*.csv',
+            'lsfmon_weekly_[0-9]*.md',
+        ]
+
+        exported_file_list = []
+
+        for pattern in pattern_list:
+            matched_file_list = sorted(output_dir.glob(pattern), key=lambda item: item.stat().st_mtime, reverse=True)
+
+            if matched_file_list:
+                exported_file_list.append(matched_file_list[0])
+
+        return exported_file_list
+
+    def export_weekly_summary_report_bundle(self):
+        """
+        One-click export weekly summary via lsfmon report weekly --export csv,md.
+        """
+        output_dir = self.select_report_output_dir()
+
+        if not output_dir:
+            return
+
+        command_list = self.build_weekly_report_command(output_dir)
+
+        common.bprint(
+            f'Export weekly summary with command: {" ".join(command_list)}',
+            date_format='%Y-%m-%d %H:%M:%S'
+        )
+
+        try:
+            completed = subprocess.run(command_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except Exception as error:
+            self.gui_warning(f'Failed to execute weekly summary export command: {error}')
+            return
+
+        if completed.returncode != 0:
+            error_message = completed.stderr.strip() or completed.stdout.strip() or f'Command exit code {completed.returncode}'
+            self.gui_warning(f'Failed to export weekly summary: {error_message}')
+            return
+
+        exported_file_list = self._collect_weekly_report_exports(Path(output_dir))
+
+        if exported_file_list:
+            message = 'Weekly summary exported successfully:\n' + '\n'.join(str(item) for item in exported_file_list)
+        else:
+            message = f'Weekly summary command finished.\nOutput directory: {output_dir}'
+
+        QMessageBox.information(self, 'Report Export Center', message)
+
     def export_jobs_table(self):
         self.export_table('jobs', self.jobs_tab_table, self.jobs_tab_table_title_list)
 
