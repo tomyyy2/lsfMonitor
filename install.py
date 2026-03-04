@@ -49,6 +49,7 @@ class Installation():
         self.install_memPrediction = install_memPrediction
         self.tool_list = [
             'monitor/bin/lsfmon',
+            'monitor/bin/bmon',
             'monitor/bin/bmonitor',
             'monitor/bin/bsample',
             'monitor/tools/akill',
@@ -59,13 +60,14 @@ class Installation():
             'monitor/tools/show_license_feature_usage'
         ]
         self.config_file = os.path.join(CWD, 'monitor', 'conf', 'config.py')
+        self.source_file = os.path.join(CWD, 'monitor', 'conf', 'lsfmonitor.source.sh')
 
     def cleanup(self):
         """
         Cleanup shell tools and configuration file.
         """
         print('>>> Cleanup')
-        remove_list = self.tool_list + [self.config_file]
+        remove_list = self.tool_list + [self.config_file, self.source_file]
         exit_code = 0
 
         for remove_file in remove_list:
@@ -108,6 +110,11 @@ class Installation():
             tool_path = os.path.join(CWD, tool_name)
             ld_library_path_setting = 'export LD_LIBRARY_PATH=$LSFMONITOR_INSTALL_PATH/lib:'
 
+            if tool_name == 'monitor/bin/bmon':
+                target_python_entry = 'monitor/bin/lsfmon.py'
+            else:
+                target_python_entry = f'{tool_name}.py'
+
             if 'LD_LIBRARY_PATH' in os.environ:
                 ld_library_path_setting += os.environ['LD_LIBRARY_PATH']
 
@@ -130,8 +137,8 @@ export LSFMONITOR_INSTALL_PATH={self.prefix}
 # Set LD_LIBRARY_PATH.
 {ld_library_path_setting}
 
-# Execute {tool_name}.py
-python3 $LSFMONITOR_INSTALL_PATH/{tool_name}.py "$@"
+# Execute python entry
+python3 $LSFMONITOR_INSTALL_PATH/{target_python_entry} "$@"
 """
                     SP.write(script_content)
 
@@ -186,6 +193,28 @@ excluded_license_servers = ""
         except Exception as warning:
             print(f'    *Warning*: Failed on opening write permission for "{db_path}": {warning}')
 
+    def gen_source_file(self):
+        """
+        Generate source helper file for shell environment setup.
+        """
+        print(f'\n>>> Generate source file "{self.source_file}".')
+
+        try:
+            os.makedirs(os.path.dirname(self.source_file), exist_ok=True)
+            with open(self.source_file, 'w') as SF:
+                source_content = f"""#!/bin/bash
+# Source this file to setup lsfMonitor engineer CLI environment.
+
+export LSFMONITOR_INSTALL_PATH={self.prefix}
+export PATH=$LSFMONITOR_INSTALL_PATH/monitor/bin:$PATH
+export LD_LIBRARY_PATH=$LSFMONITOR_INSTALL_PATH/lib:${{LD_LIBRARY_PATH:-}}
+"""
+                SF.write(source_content)
+            os.chmod(self.source_file, 0o755)
+        except Exception as error:
+            print(f'    *Error*: Failed on generating source file "{self.source_file}": {error}')
+            sys.exit(1)
+
     def install_memPrediction_tool(self):
         """
         Install memPrediction function.
@@ -224,6 +253,7 @@ excluded_license_servers = ""
 
         self.check_python_version()
         self.gen_shell_tools()
+        self.gen_source_file()
         self.gen_config_file()
 
         if self.install_memPrediction:

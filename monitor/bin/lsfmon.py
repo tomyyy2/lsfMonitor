@@ -66,7 +66,8 @@ config = _load_config()
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog='lsfmon', description='lsfMonitor engineer CLI (M1 MVP).')
+    prog_name = Path(sys.argv[0]).name or 'bmon'
+    parser = argparse.ArgumentParser(prog=prog_name, description='lsfMonitor engineer CLI (M1 MVP).')
     parser.add_argument(
         '--db-path',
         default=str(getattr(config, 'db_path', LSFMONITOR_INSTALL_PATH / 'db')),
@@ -76,16 +77,26 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest='command')
     subparsers.required = True
 
-    my_parser = subparsers.add_parser('my', help='Commands for current user.')
+    jobs_parser = subparsers.add_parser('jobs', help='Show active jobs. Default: current user; optional: specify user.')
+    jobs_parser.add_argument('user', nargs='?', default=None, help='Target user (optional).')
+    jobs_parser.set_defaults(handler=_handle_jobs)
+
+    mem_parser = subparsers.add_parser('mem', help='Show memory usage summary. Default: current user; optional: specify user.')
+    mem_parser.add_argument('user', nargs='?', default=None, help='Target user (optional).')
+    mem_parser.add_argument('--days', type=int, default=7, help='Lookback days (default: 7).')
+    mem_parser.set_defaults(handler=_handle_mem)
+
+    # Backward compatible alias: bmon my jobs / bmon my mem
+    my_parser = subparsers.add_parser('my', help=argparse.SUPPRESS)
     my_subparsers = my_parser.add_subparsers(dest='my_command')
     my_subparsers.required = True
 
-    my_jobs_parser = my_subparsers.add_parser('jobs', help='Show my current jobs.')
-    my_jobs_parser.set_defaults(handler=_handle_my_jobs)
+    my_jobs_parser = my_subparsers.add_parser('jobs', help=argparse.SUPPRESS)
+    my_jobs_parser.set_defaults(handler=_handle_jobs, user=None)
 
-    my_mem_parser = my_subparsers.add_parser('mem', help='Show my memory usage summary from sampled database.')
+    my_mem_parser = my_subparsers.add_parser('mem', help=argparse.SUPPRESS)
     my_mem_parser.add_argument('--days', type=int, default=7, help='Lookback days (default: 7).')
-    my_mem_parser.set_defaults(handler=_handle_my_mem)
+    my_mem_parser.set_defaults(handler=_handle_mem, user=None)
 
     advise_parser = subparsers.add_parser('advise', help='Show memory suggestion for one job.')
     advise_parser.add_argument('--job', required=True, help='Job ID.')
@@ -179,15 +190,51 @@ def _iter_recent_dates(days: int) -> list[str]:
     return date_list
 
 
-def _handle_my_jobs(args, _tool: str, _cluster: str) -> int:
-    user = getpass.getuser()
+def _parse_lsf_datetime(value: str) -> datetime.datetime | None:
+    value = (value or '').strip()
+
+    if not value:
+        return None
+
+    now = datetime.datetime.now()
+
+    for fmt in ('%a %b %d %H:%M:%S', '%b %d %H:%M'):
+        try:
+            parsed = datetime.datetime.strptime(value, fmt).replace(year=now.year)
+            if parsed > (now + datetime.timedelta(days=1)):
+                parsed = parsed.replace(year=now.year - 1)
+            return parsed
+        except Exception:
+            continue
+
+    return None
+
+
+def _format_duration(delta_seconds: float | int | None) -> str:
+    if delta_seconds is None:
+        return 'N/A'
+
+    total = int(max(float(delta_seconds), 0))
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    if days > 0:
+        return f'{days}d{hours:02d}h{minutes:02d}m'
+
+    return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+
+
+def _handle_jobs(args, _tool: str, _cluster: str) -> int:
+    user = str(getattr(args, 'user', '') or getpass.getuser()).strip()
     bjobs_dic = common_lsf.get_bjobs_info(command=f'bjobs -u {user} -w')
 
     if (not bjobs_dic) or ('JOBID' not in bjobs_dic):
         print(f'No active jobs found for user "{user}".')
         return 0
 
-    keys = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'SUBMIT_TIME']
+    base_keys = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'SUBMIT_TIME']
+    keys = base_keys + ['req_cor', 'req_mem(MB)', 'ava_cpus', 'mem(MB)', 'run_time']
     rows: list[list[str]] = []
 
     job_count = len(bjobs_dic.get('JOBID', []))
@@ -195,10 +242,29 @@ def _handle_my_jobs(args, _tool: str, _cluster: str) -> int:
     for index in range(job_count):
         row = []
 
-        for key in keys:
+        for key in base_keys:
             values = bjobs_dic.get(key, [])
             row.append(str(values[index]) if index < len(values) else '')
 
+        job_id = row[0] if row else ''
+        job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -UF {job_id}') if job_id else {}
+
+        if (not job_info) and job_id:
+            job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -d -UF {job_id}')
+
+        picked = _pick_job_info(job_info, job_id) or {}
+        req_core = str(picked.get('processors_requested', 'N/A') or 'N/A')
+        req_mem = _format_float(_safe_float(picked.get('rusage_mem')))
+        ava_cpus = req_core
+        mem_used = _format_float(_safe_float(picked.get('mem')))
+
+        started_dt = _parse_lsf_datetime(str(picked.get('started_time', '')))
+        if started_dt:
+            run_time = _format_duration((datetime.datetime.now() - started_dt).total_seconds())
+        else:
+            run_time = 'N/A'
+
+        row.extend([req_core, req_mem, ava_cpus, mem_used, run_time])
         rows.append(row)
 
     print(f'User: {user}')
@@ -256,12 +322,12 @@ def _collect_user_mem_rows(db_file: Path, table_name: str):
             pass
 
 
-def _handle_my_mem(args, _tool: str, cluster: str) -> int:
+def _handle_mem(args, _tool: str, cluster: str) -> int:
     if args.days <= 0:
         print('Error: --days must be a positive integer.', file=sys.stderr)
         return 1
 
-    user = getpass.getuser()
+    user = str(getattr(args, 'user', '') or getpass.getuser()).strip()
     db_path = _resolve_db_path(cluster, args.db_path)
     user_db_path = db_path / 'user'
     table_name = f'user_{user}'
