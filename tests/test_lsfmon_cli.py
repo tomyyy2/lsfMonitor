@@ -33,9 +33,45 @@ def _load_lsfmon_module(monkeypatch, lsid_info=('LSF', '10.1', 'clusterA', 'mast
     common_sqlite3_mod.get_sql_table_list = lambda *args, **kwargs: []
     common_sqlite3_mod.get_sql_table_data = lambda *args, **kwargs: {}
 
+    sample_daemon_mod = types.ModuleType('common.sample_daemon')
+
+    class _DummyManager:
+        def __init__(self, install_path, interval_seconds=300):
+            self.install_path = install_path
+            self.interval_seconds = interval_seconds
+            self.paths = types.SimpleNamespace(runner_log=Path('/tmp/sample-daemon.log'))
+
+        @staticmethod
+        def parse_interval_to_seconds(text):
+            if str(text).endswith('m'):
+                return int(str(text)[:-1]) * 60
+            return int(text)
+
+        def ensure_dirs(self):
+            return None
+
+        def install(self):
+            return 'installed'
+
+        def start(self):
+            return 'started'
+
+        def stop(self):
+            return 'stopped'
+
+        def status(self):
+            return 'running'
+
+        def uninstall(self):
+            return 'uninstalled'
+
+    sample_daemon_mod.SampleDaemonManager = _DummyManager
+    sample_daemon_mod.run_loop = lambda **kwargs: 0
+
     common_pkg.common = common_mod
     common_pkg.common_lsf = common_lsf_mod
     common_pkg.common_sqlite3 = common_sqlite3_mod
+    common_pkg.sample_daemon = sample_daemon_mod
 
     conf_pkg = types.ModuleType('conf')
     config_mod = types.ModuleType('conf.config')
@@ -46,6 +82,7 @@ def _load_lsfmon_module(monkeypatch, lsid_info=('LSF', '10.1', 'clusterA', 'mast
     monkeypatch.setitem(sys.modules, 'common.common', common_mod)
     monkeypatch.setitem(sys.modules, 'common.common_lsf', common_lsf_mod)
     monkeypatch.setitem(sys.modules, 'common.common_sqlite3', common_sqlite3_mod)
+    monkeypatch.setitem(sys.modules, 'common.sample_daemon', sample_daemon_mod)
     monkeypatch.setitem(sys.modules, 'conf', conf_pkg)
     monkeypatch.setitem(sys.modules, 'conf.config', config_mod)
 
@@ -189,6 +226,26 @@ def test_engineer_entrypoint_can_delegate_admin_commands(monkeypatch, tmp_path, 
     assert rc == 0
     assert '[lsfmon] Management overview' in captured.out
     assert 'No data found in sqlite database for this range.' in captured.out
+
+
+def test_sample_daemon_status_does_not_require_lsf(monkeypatch, capsys):
+    lsfmon = _load_lsfmon_module(monkeypatch, lsid_info=('', '', '', ''))
+
+    rc = lsfmon.main(['sample', 'daemon', 'status'])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert '[bmon sample daemon] running' in captured.out
+
+
+def test_sample_daemon_interval_parse_validation(monkeypatch, capsys):
+    lsfmon = _load_lsfmon_module(monkeypatch)
+
+    rc = lsfmon.main(['sample', 'daemon', 'install', '--interval', 'abc'])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert 'Error:' in captured.err
 
 
 def test_admin_entrypoint_rejects_engineer_commands(monkeypatch, capsys):

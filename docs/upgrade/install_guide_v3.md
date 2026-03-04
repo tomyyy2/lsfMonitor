@@ -83,11 +83,37 @@ excluded_license_servers = ""
 ./monitor/bin/lsfmon report weekly --range 7d --export csv,md
 ```
 
+### 8.2 采样守护服务（新增）
+推荐先在当前 shell 完成 LSF 环境加载，再执行 install/start（服务会自动固化并复用当前环境变量）：
+```bash
+# 安装服务（默认 5 分钟采样一次）
+./monitor/bin/bmon sample daemon install
+
+# 指定采样间隔（支持 300 / 5m / 1h）
+./monitor/bin/bmon sample daemon install --interval 5m
+./monitor/bin/bmon sample daemon start --interval 10m
+
+# 查看状态
+./monitor/bin/bmon sample daemon status
+
+# 停止服务
+./monitor/bin/bmon sample daemon stop
+
+# 卸载服务
+./monitor/bin/bmon sample daemon uninstall
+```
+
+采样内容包含：
+- `bsample -q -l -U`
+- `bsample -u`
+
+详细机制、日志路径、systemd/nohup 兼容策略见：`docs/upgrade/sample_daemon_guide.md`。
+
 > 安装后会同时生成两种 shell 接入文件：
 > - `monitor/conf/lsfmonitor.source.sh`
 > - `monitor/conf/lsfmonitor.source.csh`
 
-### 8.2 GUI
+### 8.3 GUI
 ```bash
 ./monitor/bin/bmonitor
 ```

@@ -39,6 +39,7 @@ sys.path.append(str(LSFMONITOR_INSTALL_PATH / 'monitor'))
 from common import common  # noqa: E402
 from common import common_lsf  # noqa: E402
 from common import common_sqlite3  # noqa: E402
+from common import sample_daemon  # noqa: E402
 
 
 def _load_config():
@@ -89,7 +90,36 @@ def _build_parser() -> argparse.ArgumentParser:
 
     advise_parser = subparsers.add_parser('advise', help='Show memory suggestion for one job.')
     advise_parser.add_argument('--job', required=True, help='Job ID.')
-    advise_parser.set_defaults(handler=_handle_advise)
+    advise_parser.set_defaults(handler=_handle_advise, require_lsf=True)
+
+    sample_parser = subparsers.add_parser('sample', help='Sampling operations.')
+    sample_subparsers = sample_parser.add_subparsers(dest='sample_cmd')
+    sample_subparsers.required = True
+
+    daemon_parser = sample_subparsers.add_parser('daemon', help='Manage sampling daemon service.')
+    daemon_subparsers = daemon_parser.add_subparsers(dest='daemon_cmd')
+    daemon_subparsers.required = True
+
+    daemon_install = daemon_subparsers.add_parser('install', help='Install sampling daemon service.')
+    daemon_install.add_argument('--interval', default='5m', help='Sampling interval, e.g. 5m / 300 / 1h.')
+    daemon_install.set_defaults(handler=_handle_sample_daemon_install, require_lsf=True)
+
+    daemon_start = daemon_subparsers.add_parser('start', help='Start sampling daemon service.')
+    daemon_start.add_argument('--interval', default='5m', help='Sampling interval, e.g. 5m / 300 / 1h.')
+    daemon_start.set_defaults(handler=_handle_sample_daemon_start, require_lsf=True)
+
+    daemon_stop = daemon_subparsers.add_parser('stop', help='Stop sampling daemon service.')
+    daemon_stop.set_defaults(handler=_handle_sample_daemon_stop, require_lsf=False)
+
+    daemon_status = daemon_subparsers.add_parser('status', help='Show sampling daemon status.')
+    daemon_status.set_defaults(handler=_handle_sample_daemon_status, require_lsf=False)
+
+    daemon_uninstall = daemon_subparsers.add_parser('uninstall', help='Uninstall sampling daemon service.')
+    daemon_uninstall.set_defaults(handler=_handle_sample_daemon_uninstall, require_lsf=False)
+
+    daemon_run_loop = daemon_subparsers.add_parser('run-loop', help=argparse.SUPPRESS)
+    daemon_run_loop.add_argument('--interval', default='5m', help='Sampling interval, e.g. 5m / 300 / 1h.')
+    daemon_run_loop.set_defaults(handler=_handle_sample_daemon_run_loop, require_lsf=False)
 
     return parser
 
@@ -510,6 +540,83 @@ def _handle_advise(args, _tool: str, _cluster: str) -> int:
     return 0
 
 
+def _build_sample_daemon_manager(interval_text: str) -> sample_daemon.SampleDaemonManager:
+    interval_seconds = sample_daemon.SampleDaemonManager.parse_interval_to_seconds(interval_text)
+    return sample_daemon.SampleDaemonManager(
+        install_path=LSFMONITOR_INSTALL_PATH,
+        interval_seconds=interval_seconds,
+    )
+
+
+def _handle_sample_daemon_install(args, tool, cluster) -> int:
+    _ = (tool, cluster)
+    try:
+        manager = _build_sample_daemon_manager(args.interval)
+    except ValueError as exc:
+        print(f'Error: {exc}', file=sys.stderr)
+        return 1
+
+    message = manager.install()
+    print(f'[bmon sample daemon] {message}')
+    print(f'[bmon sample daemon] log: {manager.paths.runner_log}')
+    return 0
+
+
+def _handle_sample_daemon_start(args, tool, cluster) -> int:
+    _ = (tool, cluster)
+    try:
+        manager = _build_sample_daemon_manager(args.interval)
+    except ValueError as exc:
+        print(f'Error: {exc}', file=sys.stderr)
+        return 1
+
+    message = manager.start()
+    print(f'[bmon sample daemon] {message}')
+    print(f'[bmon sample daemon] log: {manager.paths.runner_log}')
+    return 0
+
+
+def _handle_sample_daemon_stop(args, tool, cluster) -> int:
+    _ = (args, tool, cluster)
+    manager = sample_daemon.SampleDaemonManager(install_path=LSFMONITOR_INSTALL_PATH)
+    message = manager.stop()
+    print(f'[bmon sample daemon] {message}')
+    return 0
+
+
+def _handle_sample_daemon_status(args, tool, cluster) -> int:
+    _ = (args, tool, cluster)
+    manager = sample_daemon.SampleDaemonManager(install_path=LSFMONITOR_INSTALL_PATH)
+    message = manager.status()
+    print(f'[bmon sample daemon] {message}')
+    print(f'[bmon sample daemon] log: {manager.paths.runner_log}')
+    return 0
+
+
+def _handle_sample_daemon_uninstall(args, tool, cluster) -> int:
+    _ = (args, tool, cluster)
+    manager = sample_daemon.SampleDaemonManager(install_path=LSFMONITOR_INSTALL_PATH)
+    message = manager.uninstall()
+    print(f'[bmon sample daemon] {message}')
+    return 0
+
+
+def _handle_sample_daemon_run_loop(args, tool, cluster) -> int:
+    _ = (tool, cluster)
+    try:
+        manager = _build_sample_daemon_manager(args.interval)
+    except ValueError as exc:
+        print(f'Error: {exc}', file=sys.stderr)
+        return 1
+
+    manager.ensure_dirs()
+    return sample_daemon.run_loop(
+        install_path=LSFMONITOR_INSTALL_PATH,
+        interval_seconds=manager.interval_seconds,
+        log_file=manager.paths.runner_log,
+    )
+
+
 _ADMIN_COMMANDS = {'mgmt', 'report'}
 
 
@@ -569,15 +676,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv_list)
 
-    tool, cluster = _ensure_lsf_environment()
+    require_lsf = bool(getattr(args, 'require_lsf', True))
 
-    if not tool:
-        print(
-            'Error: No LSF/Volclava/Openlava environment detected. '\
-            'Please source scheduler environment first and retry.',
-            file=sys.stderr,
-        )
-        return 2
+    tool, cluster = '', ''
+    if require_lsf:
+        tool, cluster = _ensure_lsf_environment()
+
+        if not tool:
+            print(
+                'Error: No LSF/Volclava/Openlava environment detected. '\
+                'Please source scheduler environment first and retry.',
+                file=sys.stderr,
+            )
+            return 2
 
     return args.handler(args, tool, cluster)
 
