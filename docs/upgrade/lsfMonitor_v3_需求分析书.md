@@ -194,3 +194,24 @@
    - `monitor/conf/lsfmonitor.source.csh`（csh）
 
 对应追踪 issue：#9、#10、#11、#12。
+
+### 11.2 验收命令（新增）
+```bash
+# 工程师 CLI
+./monitor/bin/bmon --help
+./monitor/bin/bmon jobs --help
+./monitor/bin/bmon mem --help
+./monitor/bin/bmon advise --help
+./monitor/bin/bmon jobs
+./monitor/bin/bmon jobs <uid>
+./monitor/bin/bmon mem --days 7
+./monitor/bin/bmon mem <uid> --days 7
+
+# 管理员 CLI
+./monitor/bin/lsfmon mgmt overview --range 7d
+./monitor/bin/lsfmon mgmt trend --range 30d --export csv
+./monitor/bin/lsfmon report weekly --range 7d --export csv,md
+
+# 安装产物（source 文件）
+ls monitor/conf/lsfmonitor.source.sh monitor/conf/lsfmonitor.source.csh
+```

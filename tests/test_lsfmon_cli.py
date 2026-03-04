@@ -61,14 +61,14 @@ def _load_lsfmon_module(monkeypatch, lsid_info=('LSF', '10.1', 'clusterA', 'mast
 def test_main_reports_clear_error_when_lsf_missing(monkeypatch, capsys):
     lsfmon = _load_lsfmon_module(monkeypatch, lsid_info=('', '', '', ''))
 
-    rc = lsfmon.main(['my', 'jobs'])
+    rc = lsfmon.main(['jobs'])
 
     captured = capsys.readouterr()
     assert rc == 2
     assert 'No LSF/Volclava/Openlava environment detected' in captured.err
 
 
-def test_my_jobs_prints_current_user_jobs(monkeypatch, capsys):
+def test_jobs_prints_current_user_jobs(monkeypatch, capsys):
     lsfmon = _load_lsfmon_module(monkeypatch)
     monkeypatch.setattr(lsfmon.getpass, 'getuser', lambda: 'alice')
 
@@ -86,15 +86,31 @@ def test_my_jobs_prints_current_user_jobs(monkeypatch, capsys):
         },
     )
 
-    rc = lsfmon.main(['my', 'jobs'])
+    monkeypatch.setattr(
+        lsfmon.common_lsf,
+        'get_bjobs_uf_info',
+        lambda **kwargs: {
+            '123': {
+                'processors_requested': '4',
+                'rusage_mem': '2048',
+                'mem': '1024',
+                'cpu_time': '1800',
+                'started_time': 'Mar 03 11:20:00',
+            }
+        },
+    )
+
+    rc = lsfmon.main(['jobs'])
 
     captured = capsys.readouterr()
     assert rc == 0
     assert 'User: alice' in captured.out
     assert 'demo_job' in captured.out
+    assert 'idle_factor' in captured.out
+    assert 'cpu_util(%)' in captured.out
 
 
-def test_my_mem_reads_sampled_db_and_prints_summary(monkeypatch, tmp_path, capsys):
+def test_mem_reads_sampled_db_and_prints_summary(monkeypatch, tmp_path, capsys):
     lsfmon = _load_lsfmon_module(monkeypatch, lsid_info=('LSF', '10.1', 'clusterX', 'masterX'))
     monkeypatch.setattr(lsfmon.getpass, 'getuser', lambda: 'alice')
     monkeypatch.setattr(lsfmon, '_iter_recent_dates', lambda days: ['20260303'])
@@ -129,7 +145,7 @@ def test_my_mem_reads_sampled_db_and_prints_summary(monkeypatch, tmp_path, capsy
         },
     )
 
-    rc = lsfmon.main(['my', 'mem', '--days', '1'])
+    rc = lsfmon.main(['mem', '--days', '1'])
 
     captured = capsys.readouterr()
     assert rc == 0
@@ -175,19 +191,8 @@ def test_engineer_entrypoint_can_delegate_admin_commands(monkeypatch, tmp_path, 
     assert 'No data found in sqlite database for this range.' in captured.out
 
 
-def test_admin_entrypoint_can_delegate_engineer_commands(monkeypatch, capsys):
+def test_admin_entrypoint_rejects_engineer_commands(monkeypatch, capsys):
     _load_lsfmon_module(monkeypatch)
-    common_lsf_mod = sys.modules['common.common_lsf']
-
-    common_lsf_mod.get_bjobs_info = lambda **kwargs: {
-        'JOBID': ['123'],
-        'USER': ['alice'],
-        'STAT': ['RUN'],
-        'QUEUE': ['normal'],
-        'EXEC_HOST': ['host01'],
-        'JOB_NAME': ['demo_job'],
-        'SUBMIT_TIME': ['Mar 03 11:20'],
-    }
 
     module_name = f'_test_admin_lsfmon_{uuid.uuid4().hex}'
     spec = importlib.util.spec_from_file_location(module_name, ADMIN_LSFMON_PATH)
@@ -195,54 +200,11 @@ def test_admin_entrypoint_can_delegate_engineer_commands(monkeypatch, capsys):
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(admin_lsfmon)
 
-    rc = admin_lsfmon.main(['--db-path', str(ROOT / 'db'), 'my', 'jobs'])
+    import pytest
+
+    with pytest.raises(SystemExit) as exc_info:
+        admin_lsfmon.main(['--db-path', str(ROOT / 'db'), 'jobs'])
 
     captured = capsys.readouterr()
-    assert rc == 0
-    assert 'Active jobs: 1' in captured.out
-    assert 'demo_job' in captured.out
-
-
-def test_admin_entrypoint_keeps_db_path_when_delegating_engineer_commands(monkeypatch, tmp_path, capsys):
-    _load_lsfmon_module(monkeypatch)
-    common_sqlite3_mod = sys.modules['common.common_sqlite3']
-
-    monkeypatch.setattr('getpass.getuser', lambda: 'alice')
-
-    class FakeConn:
-        def __init__(self):
-            self.closed = False
-
-        def close(self):
-            self.closed = True
-
-    fake_conn = FakeConn()
-
-    common_sqlite3_mod.connect_db_file = lambda *args, **kwargs: ('passed', fake_conn)
-    common_sqlite3_mod.get_sql_table_list = lambda *args, **kwargs: ['user_alice']
-    common_sqlite3_mod.get_sql_table_data = lambda *args, **kwargs: {
-        'job': ['1001'],
-        'status': ['DONE'],
-        'queue': ['normal'],
-        'project': ['p1'],
-        'rusage_mem': ['1000'],
-        'max_mem': ['500'],
-    }
-
-    date_tag = dt.datetime.now().strftime('%Y%m%d')
-    db_file = tmp_path / 'clusterA' / 'user' / f'{date_tag}.db'
-    db_file.parent.mkdir(parents=True, exist_ok=True)
-    db_file.write_text('', encoding='utf-8')
-
-    module_name = f'_test_admin_lsfmon_{uuid.uuid4().hex}'
-    spec = importlib.util.spec_from_file_location(module_name, ADMIN_LSFMON_PATH)
-    admin_lsfmon = importlib.util.module_from_spec(spec)
-    assert spec is not None and spec.loader is not None
-    spec.loader.exec_module(admin_lsfmon)
-
-    rc = admin_lsfmon.main(['--db-path', str(tmp_path), 'my', 'mem', '--days', '1'])
-
-    captured = capsys.readouterr()
-    assert rc == 0
-    assert fake_conn.closed is True
-    assert 'Overall' in captured.out
+    assert exc_info.value.code == 2
+    assert 'usage:' in captured.err

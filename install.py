@@ -48,7 +48,6 @@ class Installation():
         self.force_mode = force_mode
         self.install_memPrediction = install_memPrediction
         self.tool_list = [
-            'monitor/bin/lsfmon',
             'monitor/bin/bmon',
             'monitor/bin/bmonitor',
             'monitor/bin/bsample',
@@ -60,14 +59,15 @@ class Installation():
             'monitor/tools/show_license_feature_usage'
         ]
         self.config_file = os.path.join(CWD, 'monitor', 'conf', 'config.py')
-        self.source_file = os.path.join(CWD, 'monitor', 'conf', 'lsfmonitor.source.sh')
+        self.source_file_sh = os.path.join(CWD, 'monitor', 'conf', 'lsfmonitor.source.sh')
+        self.source_file_csh = os.path.join(CWD, 'monitor', 'conf', 'lsfmonitor.source.csh')
 
     def cleanup(self):
         """
         Cleanup shell tools and configuration file.
         """
         print('>>> Cleanup')
-        remove_list = self.tool_list + [self.config_file, self.source_file]
+        remove_list = self.tool_list + [self.config_file, self.source_file_sh, self.source_file_csh]
         exit_code = 0
 
         for remove_file in remove_list:
@@ -157,8 +157,8 @@ python3 $LSFMONITOR_INSTALL_PATH/{target_python_entry} "$@"
             print(f'    *Warning*: config file "{self.config_file}" already exists, will not update it.')
             return
 
-        db_path = os.path.join(self.prefix, 'db')
-        lmstat_path = os.path.join(self.prefix, 'monitor', 'tools', 'lmstat')
+        db_path = os.path.join(self.prefix, 'db').replace('\\', '/')
+        lmstat_path = os.path.join(self.prefix, 'monitor', 'tools', 'lmstat').replace('\\', '/')
 
         try:
             # Ensure directory exists
@@ -195,24 +195,41 @@ excluded_license_servers = ""
 
     def gen_source_file(self):
         """
-        Generate source helper file for shell environment setup.
+        Generate source helper files for shell environment setup.
         """
-        print(f'\n>>> Generate source file "{self.source_file}".')
+        print(f'\n>>> Generate source file "{self.source_file_sh}".')
+        print(f'>>> Generate source file "{self.source_file_csh}".')
 
         try:
-            os.makedirs(os.path.dirname(self.source_file), exist_ok=True)
-            with open(self.source_file, 'w') as SF:
-                source_content = f"""#!/bin/bash
+            os.makedirs(os.path.dirname(self.source_file_sh), exist_ok=True)
+
+            with open(self.source_file_sh, 'w') as sf_sh:
+                source_content_sh = f"""#!/bin/bash
 # Source this file to setup lsfMonitor engineer CLI environment.
 
 export LSFMONITOR_INSTALL_PATH={self.prefix}
 export PATH=$LSFMONITOR_INSTALL_PATH/monitor/bin:$PATH
 export LD_LIBRARY_PATH=$LSFMONITOR_INSTALL_PATH/lib:${{LD_LIBRARY_PATH:-}}
 """
-                SF.write(source_content)
-            os.chmod(self.source_file, 0o755)
+                sf_sh.write(source_content_sh)
+            os.chmod(self.source_file_sh, 0o755)
+
+            with open(self.source_file_csh, 'w') as sf_csh:
+                source_content_csh = f"""#!/bin/csh
+# Source this file to setup lsfMonitor engineer CLI environment.
+
+setenv LSFMONITOR_INSTALL_PATH {self.prefix}
+setenv PATH $LSFMONITOR_INSTALL_PATH/monitor/bin:$PATH
+if ( $?LD_LIBRARY_PATH ) then
+    setenv LD_LIBRARY_PATH $LSFMONITOR_INSTALL_PATH/lib:$LD_LIBRARY_PATH
+else
+    setenv LD_LIBRARY_PATH $LSFMONITOR_INSTALL_PATH/lib
+endif
+"""
+                sf_csh.write(source_content_csh)
+            os.chmod(self.source_file_csh, 0o755)
         except Exception as error:
-            print(f'    *Error*: Failed on generating source file "{self.source_file}": {error}')
+            print(f'    *Error*: Failed on generating source file: {error}')
             sys.exit(1)
 
     def install_memPrediction_tool(self):

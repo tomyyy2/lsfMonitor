@@ -45,7 +45,7 @@ python3 install.py --prefix $(pwd)
 安装后入口脚本默认生成在仓库内 `./monitor/bin/`，请使用：
 - `./monitor/bin/bmonitor`
 - `./monitor/bin/bsample`
-- `./monitor/bin/lsfmon`
+- `./monitor/bin/bmon`
 
 如需直接用命令名调用，可先加入 PATH：
 ```bash
@@ -74,12 +74,18 @@ excluded_license_servers = ""
 ## 8. 功能验证清单
 ### 8.1 CLI
 ```bash
-./monitor/bin/lsfmon my jobs
-./monitor/bin/lsfmon my mem --days 7
+./monitor/bin/bmon jobs
+./monitor/bin/bmon jobs alice
+./monitor/bin/bmon mem --days 7
+./monitor/bin/bmon mem alice --days 7
 ./monitor/bin/lsfmon mgmt overview --range 7d
 ./monitor/bin/lsfmon mgmt trend --range 30d --export csv
 ./monitor/bin/lsfmon report weekly --range 7d --export csv,md
 ```
+
+> 安装后会同时生成两种 shell 接入文件：
+> - `monitor/conf/lsfmonitor.source.sh`
+> - `monitor/conf/lsfmonitor.source.csh`
 
 ### 8.2 GUI
 ```bash

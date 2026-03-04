@@ -3,9 +3,9 @@
 """Engineer-focused CLI for lsfMonitor (M1 MVP).
 
 Supported commands:
-- lsfmon my jobs
-- lsfmon my mem --days <N>
-- lsfmon advise --job <JOBID>
+- bmon jobs [uid]
+- bmon mem [uid] --days <N>
+- bmon advise --job <JOBID>
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import datetime
 import getpass
 import importlib.util
 import os
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -85,18 +86,6 @@ def _build_parser() -> argparse.ArgumentParser:
     mem_parser.add_argument('user', nargs='?', default=None, help='Target user (optional).')
     mem_parser.add_argument('--days', type=int, default=7, help='Lookback days (default: 7).')
     mem_parser.set_defaults(handler=_handle_mem)
-
-    # Backward compatible alias: bmon my jobs / bmon my mem
-    my_parser = subparsers.add_parser('my', help=argparse.SUPPRESS)
-    my_subparsers = my_parser.add_subparsers(dest='my_command')
-    my_subparsers.required = True
-
-    my_jobs_parser = my_subparsers.add_parser('jobs', help=argparse.SUPPRESS)
-    my_jobs_parser.set_defaults(handler=_handle_jobs, user=None)
-
-    my_mem_parser = my_subparsers.add_parser('mem', help=argparse.SUPPRESS)
-    my_mem_parser.add_argument('--days', type=int, default=7, help='Lookback days (default: 7).')
-    my_mem_parser.set_defaults(handler=_handle_mem, user=None)
 
     advise_parser = subparsers.add_parser('advise', help='Show memory suggestion for one job.')
     advise_parser.add_argument('--job', required=True, help='Job ID.')
@@ -225,6 +214,32 @@ def _format_duration(delta_seconds: float | int | None) -> str:
     return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
 
 
+def _parse_cpu_time_seconds(value) -> float | None:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if (not text) or (text in {'N/A', '-', 'None'}):
+        return None
+
+    number_match = re.search(r'([0-9]+(?:\.[0-9]+)?)', text)
+    if not number_match:
+        return None
+
+    number = float(number_match.group(1))
+    lowered = text.lower()
+
+    if 'hour' in lowered or lowered.endswith('h'):
+        return number * 3600
+    if 'min' in lowered or lowered.endswith('m'):
+        return number * 60
+
+    return number
+
+
 def _handle_jobs(args, _tool: str, _cluster: str) -> int:
     user = str(getattr(args, 'user', '') or getpass.getuser()).strip()
     bjobs_dic = common_lsf.get_bjobs_info(command=f'bjobs -u {user} -w')
@@ -234,7 +249,7 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         return 0
 
     base_keys = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'SUBMIT_TIME']
-    keys = base_keys + ['req_cor', 'req_mem(MB)', 'ava_cpus', 'mem(MB)', 'run_time']
+    keys = base_keys + ['req_cor', 'req_mem(MB)', 'mem(MB)', 'run_time', 'idle_factor', 'cpu_util(%)']
     rows: list[list[str]] = []
 
     job_count = len(bjobs_dic.get('JOBID', []))
@@ -255,16 +270,32 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         picked = _pick_job_info(job_info, job_id) or {}
         req_core = str(picked.get('processors_requested', 'N/A') or 'N/A')
         req_mem = _format_float(_safe_float(picked.get('rusage_mem')))
-        ava_cpus = req_core
         mem_used = _format_float(_safe_float(picked.get('mem')))
 
         started_dt = _parse_lsf_datetime(str(picked.get('started_time', '')))
+        runtime_seconds = None
         if started_dt:
-            run_time = _format_duration((datetime.datetime.now() - started_dt).total_seconds())
+            runtime_seconds = (datetime.datetime.now() - started_dt).total_seconds()
+            run_time = _format_duration(runtime_seconds)
         else:
             run_time = 'N/A'
 
-        row.extend([req_core, req_mem, ava_cpus, mem_used, run_time])
+        cpu_time_seconds = _parse_cpu_time_seconds(picked.get('cpu_time'))
+        idle_factor = None
+        cpu_util = None
+
+        if runtime_seconds and runtime_seconds > 0 and cpu_time_seconds is not None:
+            idle_factor = max(0.0, cpu_time_seconds / runtime_seconds)
+            cpu_util = idle_factor * 100.0
+
+        row.extend([
+            req_core,
+            req_mem,
+            mem_used,
+            run_time,
+            _format_float(idle_factor),
+            _format_float(cpu_util),
+        ])
         rows.append(row)
 
     print(f'User: {user}')
