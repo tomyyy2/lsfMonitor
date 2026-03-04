@@ -87,10 +87,10 @@
 - FR-E3：参数建议（基于历史模式给出建议区间）
 - FR-E4：个人趋势（7/30/90 天）
 
-建议命令原型：
-- `lsfmon my jobs`
-- `lsfmon my mem --days 7`
-- `lsfmon advise --job <jobid>`
+建议命令原型（2026-03-04 已确认口径）：
+- `bmon jobs [uid]`（不传 uid 默认当前用户）
+- `bmon mem [uid] --days 7`
+- `bmon advise --job <jobid>`
 
 ### 5.2 管理员端（CLI）
 - FR-M1：资源总览（队列/主机/用户/项目）
@@ -99,9 +99,9 @@
 - FR-M4：日报/周报/月报导出
 
 建议命令原型：
-- `lsfmon mgmt overview --range 7d`
-- `lsfmon mgmt trend --range 90d`
-- `lsfmon report weekly --export csv,md`
+- `bmon mgmt overview --range 7d`
+- `bmon mgmt trend --range 90d`
+- `bmon report weekly --export csv,md`
 
 ### 5.3 管理员端（本地 GUI，非 Web）
 - FR-G1：多页签总览（总览/队列/主机/用户/项目/License/异常）
@@ -180,3 +180,17 @@
 - 管理员必须可查看长期与短期资源状态。
 - 项目面向 IC 设计开发 LSF 场景，OS 绑定较严重。
 - **重点新增：必须构建 CI/CD 模式，编码后的每一次提交都要完成编码质量检查 / 构建验证 / 测试 / 部署验证（至少 Dry-Run）。**
+
+### 11.1 2026-03-04 新增确认（工程师体验专项）
+1. 工程师 CLI 命令统一从 `lsfmon` 切换为 `bmon`，当前阶段不做兼容等待期。
+2. `my` 子命令层级简化：
+   - `bmon jobs` 默认查询当前用户
+   - `bmon jobs <uid>` 查询指定用户
+   - `bmon mem` / `bmon mem <uid>` 同理
+3. `jobs` 输出增强：增加 `req_cor`、`req_mem`、`mem`、`run_time`；
+   原 `ava_cpus` 需求按讨论口径落地为 `idle_factor = cputime/runtime`（可附带 `cpu_util%`）。
+4. 安装后需提供双 shell 环境接入文件：
+   - `monitor/conf/lsfmonitor.source.sh`（bash）
+   - `monitor/conf/lsfmonitor.source.csh`（csh）
+
+对应追踪 issue：#9、#10、#11、#12。
