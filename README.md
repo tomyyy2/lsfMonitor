@@ -48,8 +48,13 @@ Notes:
 
 - `jobs` reads current LSF jobs (default current user, optional target uid).
 - `mem` summarizes sampled memory history from `bsample -u` data (default current user).
-- `jobs` output includes `req_cor`, `req_mem(MB)`, `mem(MB)`, `run_time`, `idle_factor` and `cpu_util(%)`.
-- `idle_factor = cputime/runtime`.
+- `jobs` output uses fixed v2 columns:
+  `JOBID USER STAT QUEUE EXEC_HOST JOB_NAME PWD SUBMIT_TIME RUN_TIME REQ_CPU REQ_MEM CPU MEM`.
+- `REQ_CPU` replaces legacy `req_cor`; `CPU` displays `CPU%`.
+- Time format: `SUBMIT_TIME=YYYY-MM-DD HH:MM:SS`, `RUN_TIME=HH:MM:SS`.
+- `EXEC_HOST` is normalized/merged (e.g. `2*hostA:hostA -> 3*hostA`).
+- `REQ_MEM/MEM` are shown with human-readable `K/M/G/T` units.
+- Long text columns are truncated to width 30 by default. Use `-a/--all` for full text, or advanced `--full-text/--max-col-width`.
 - `advise` gives a simple `rusage[mem]` range suggestion for a specified job.
 - If LSF environment is not available, `bmon` will report a clear setup error.
 

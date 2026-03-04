@@ -75,7 +75,8 @@ excluded_license_servers = ""
 ### 8.1 CLI
 ```bash
 ./monitor/bin/bmon jobs
-./monitor/bin/bmon jobs alice
+./monitor/bin/bmon jobs alice -a
+./monitor/bin/bmon jobs alice --max-col-width 50
 ./monitor/bin/bmon mem --days 7
 ./monitor/bin/bmon mem alice --days 7
 ./monitor/bin/lsfmon mgmt overview --range 7d

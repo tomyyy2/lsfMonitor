@@ -105,7 +105,7 @@ def test_main_reports_clear_error_when_lsf_missing(monkeypatch, capsys):
     assert 'No LSF/Volclava/Openlava environment detected' in captured.err
 
 
-def test_jobs_prints_current_user_jobs(monkeypatch, capsys):
+def test_jobs_prints_current_user_jobs_v2_columns(monkeypatch, capsys):
     lsfmon = _load_lsfmon_module(monkeypatch)
     monkeypatch.setattr(lsfmon.getpass, 'getuser', lambda: 'alice')
 
@@ -117,11 +117,14 @@ def test_jobs_prints_current_user_jobs(monkeypatch, capsys):
             'USER': ['alice'],
             'STAT': ['RUN'],
             'QUEUE': ['normal'],
-            'EXEC_HOST': ['host01'],
-            'JOB_NAME': ['demo_job'],
+            'EXEC_HOST': ['2*host01:host01'],
+            'JOB_NAME': ['demo_job_' + ('x' * 40)],
             'SUBMIT_TIME': ['Mar 03 11:20'],
         },
     )
+
+    now = dt.datetime.now()
+    started = (now - dt.timedelta(minutes=30)).strftime('%b %d %H:%M:%S')
 
     monkeypatch.setattr(
         lsfmon.common_lsf,
@@ -131,8 +134,9 @@ def test_jobs_prints_current_user_jobs(monkeypatch, capsys):
                 'processors_requested': '4',
                 'rusage_mem': '2048',
                 'mem': '1024',
-                'cpu_time': '1800',
-                'started_time': 'Mar 03 11:20:00',
+                'cpu_time': '900',
+                'started_time': started,
+                'cwd': '/very/long/path/' + ('p' * 50),
             }
         },
     )
@@ -142,9 +146,16 @@ def test_jobs_prints_current_user_jobs(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert rc == 0
     assert 'User: alice' in captured.out
-    assert 'demo_job' in captured.out
-    assert 'idle_factor' in captured.out
-    assert 'cpu_util(%)' in captured.out
+    header_line = next((line for line in captured.out.splitlines() if line.startswith('JOBID')), '')
+    assert header_line
+    expected_order = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'PWD', 'SUBMIT_TIME', 'RUN_TIME', 'REQ_CPU', 'REQ_MEM', 'CPU', 'MEM']
+    assert header_line.split() == expected_order
+    assert 'req_cor' not in captured.out
+    assert '3*host01' in captured.out
+    assert '2.0G' in captured.out
+    assert '1.0G' in captured.out
+    assert '%' in captured.out
+    assert '...' in captured.out
 
 
 def test_mem_reads_sampled_db_and_prints_summary(monkeypatch, tmp_path, capsys):
@@ -246,6 +257,89 @@ def test_sample_daemon_interval_parse_validation(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert rc == 1
     assert 'Error:' in captured.err
+
+
+def test_jobs_all_disables_default_truncation(monkeypatch, capsys):
+    lsfmon = _load_lsfmon_module(monkeypatch)
+    monkeypatch.setattr(lsfmon.getpass, 'getuser', lambda: 'alice')
+
+    long_name = 'very_long_job_name_' + ('x' * 60)
+    long_pwd = '/pwd/' + ('y' * 60)
+
+    monkeypatch.setattr(
+        lsfmon.common_lsf,
+        'get_bjobs_info',
+        lambda **kwargs: {
+            'JOBID': ['123'],
+            'USER': ['alice'],
+            'STAT': ['RUN'],
+            'QUEUE': ['normal'],
+            'EXEC_HOST': ['host01'],
+            'JOB_NAME': [long_name],
+            'SUBMIT_TIME': ['Mar 03 11:20'],
+        },
+    )
+
+    monkeypatch.setattr(
+        lsfmon.common_lsf,
+        'get_bjobs_uf_info',
+        lambda **kwargs: {'123': {'processors_requested': '1', 'started_time': 'Mar 03 11:20:00', 'cwd': long_pwd}},
+    )
+
+    rc = lsfmon.main(['jobs', '--all'])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert long_name in captured.out
+    assert long_pwd in captured.out
+    assert '...' not in captured.out
+
+
+def test_jobs_submit_time_and_runtime_format(monkeypatch, capsys):
+    lsfmon = _load_lsfmon_module(monkeypatch)
+    monkeypatch.setattr(lsfmon.getpass, 'getuser', lambda: 'alice')
+
+    now = dt.datetime.now()
+    started = (now - dt.timedelta(hours=1, minutes=2, seconds=3)).strftime('%b %d %H:%M:%S')
+
+    monkeypatch.setattr(
+        lsfmon.common_lsf,
+        'get_bjobs_info',
+        lambda **kwargs: {
+            'JOBID': ['123'],
+            'USER': ['alice'],
+            'STAT': ['RUN'],
+            'QUEUE': ['normal'],
+            'EXEC_HOST': ['host01'],
+            'JOB_NAME': ['demo'],
+            'SUBMIT_TIME': ['Mar 03 11:20'],
+        },
+    )
+    monkeypatch.setattr(
+        lsfmon.common_lsf,
+        'get_bjobs_uf_info',
+        lambda **kwargs: {'123': {'processors_requested': '1', 'started_time': started, 'cpu_time': '3600', 'cwd': '/tmp'}},
+    )
+
+    rc = lsfmon.main(['jobs', '--max-col-width', '0'])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert f'{now.year}-03-03 11:20:00' in captured.out
+    assert any(token.count(':') == 2 for token in captured.out.split())
+
+
+def test_jobs_help_contains_new_options_and_examples(monkeypatch, capsys):
+    lsfmon = _load_lsfmon_module(monkeypatch)
+
+    import pytest
+
+    with pytest.raises(SystemExit) as exc_info:
+        lsfmon.main(['jobs', '--help'])
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 0
+    assert '--all' in captured.out
+    assert '--full-text' in captured.out
+    assert '--max-col-width' in captured.out
 
 
 def test_admin_entrypoint_rejects_engineer_commands(monkeypatch, capsys):

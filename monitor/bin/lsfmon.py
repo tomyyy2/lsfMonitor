@@ -69,18 +69,43 @@ config = _load_config()
 
 def _build_parser() -> argparse.ArgumentParser:
     prog_name = Path(sys.argv[0]).name or 'bmon'
-    parser = argparse.ArgumentParser(prog=prog_name, description='lsfMonitor engineer CLI (M1 MVP).')
+    parser = argparse.ArgumentParser(
+        prog=prog_name,
+        description='lsfMonitor engineer CLI',
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            'Examples:\n'
+            f'  {prog_name} jobs\n'
+            f'  {prog_name} jobs alice -a\n'
+            f'  {prog_name} jobs alice --max-col-width 50\n'
+            f'  {prog_name} mem --days 7\n'
+            f'  {prog_name} advise --job 12345\n'
+            f'  {prog_name} sample daemon install --interval 5m\n'
+        ),
+    )
     parser.add_argument(
         '--db-path',
         default=str(getattr(config, 'db_path', LSFMONITOR_INSTALL_PATH / 'db')),
-        help='Path to sqlite database root. Default: user/local config db_path.',
+        help='Path to sqlite database root (default: from config db_path).',
     )
 
     subparsers = parser.add_subparsers(dest='command')
     subparsers.required = True
 
-    jobs_parser = subparsers.add_parser('jobs', help='Show active jobs. Default: current user; optional: specify user.')
+    jobs_parser = subparsers.add_parser(
+        'jobs',
+        help='Show active jobs (default user=current user).',
+        description='Show active jobs with normalized hosts/units/time fields.',
+    )
     jobs_parser.add_argument('user', nargs='?', default=None, help='Target user (optional).')
+    jobs_parser.add_argument('-a', '--all', action='store_true', help='Show full text (no truncation for long columns).')
+    jobs_parser.add_argument('--full-text', action='store_true', help='Advanced: same as --all; keep for compatibility.')
+    jobs_parser.add_argument(
+        '--max-col-width',
+        type=int,
+        default=None,
+        help='Advanced: max width for long columns (default: 30; <=0 means unlimited).',
+    )
     jobs_parser.set_defaults(handler=_handle_jobs)
 
     mem_parser = subparsers.add_parser('mem', help='Show memory usage summary. Default: current user; optional: specify user.')
@@ -217,7 +242,7 @@ def _parse_lsf_datetime(value: str) -> datetime.datetime | None:
 
     now = datetime.datetime.now()
 
-    for fmt in ('%a %b %d %H:%M:%S', '%b %d %H:%M'):
+    for fmt in ('%a %b %d %H:%M:%S', '%b %d %H:%M:%S', '%b %d %H:%M'):
         try:
             parsed = datetime.datetime.strptime(value, fmt).replace(year=now.year)
             if parsed > (now + datetime.timedelta(days=1)):
@@ -234,14 +259,90 @@ def _format_duration(delta_seconds: float | int | None) -> str:
         return 'N/A'
 
     total = int(max(float(delta_seconds), 0))
-    days, rem = divmod(total, 86400)
-    hours, rem = divmod(rem, 3600)
+    hours, rem = divmod(total, 3600)
     minutes, seconds = divmod(rem, 60)
-
-    if days > 0:
-        return f'{days}d{hours:02d}h{minutes:02d}m'
-
     return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+
+
+def _format_submit_time(value: str) -> str:
+    parsed = _parse_lsf_datetime(value)
+    if parsed is None:
+        return 'N/A' if not str(value or '').strip() else str(value)
+    return parsed.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _normalize_exec_hosts(value: str) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return 'N/A'
+
+    parts = [token for token in re.split(r'[,:+\s]+', text) if token]
+    if not parts:
+        return text
+
+    host_counts: dict[str, int] = {}
+    host_order: list[str] = []
+
+    for part in parts:
+        match = re.match(r'^(?:(\d+)\*)?(.+)$', part)
+        if not match:
+            continue
+        count = int(match.group(1) or '1')
+        host = (match.group(2) or '').strip()
+        if not host:
+            continue
+        if host not in host_counts:
+            host_order.append(host)
+            host_counts[host] = 0
+        host_counts[host] += count
+
+    if not host_counts:
+        return text
+
+    normalized = []
+    for host in host_order:
+        count = host_counts[host]
+        normalized.append(f'{count}*{host}' if count > 1 else host)
+
+    return ' '.join(normalized)
+
+
+def _format_scaled_memory(value, input_unit: str = 'MB') -> str:
+    number = _safe_float(value)
+    if number is None:
+        return 'N/A'
+
+    factor_from_unit = {
+        'B': 1,
+        'K': 1024,
+        'KB': 1024,
+        'M': 1024**2,
+        'MB': 1024**2,
+        'G': 1024**3,
+        'GB': 1024**3,
+        'T': 1024**4,
+        'TB': 1024**4,
+    }
+    unit = str(input_unit or 'MB').upper()
+    base = factor_from_unit.get(unit, 1024**2)
+    bytes_value = number * base
+
+    for target_unit, scale in (('T', 1024**4), ('G', 1024**3), ('M', 1024**2), ('K', 1024)):
+        if bytes_value >= scale:
+            return f'{bytes_value / scale:.1f}{target_unit}'
+
+    return f'{int(bytes_value)}B'
+
+
+def _truncate_text(value: str, max_width: int | None) -> str:
+    text = str(value)
+    if (max_width is None) or (max_width <= 0):
+        return text
+    if len(text) <= max_width:
+        return text
+    if max_width <= 3:
+        return text[:max_width]
+    return f'{text[: max_width - 3]}...'
 
 
 def _parse_cpu_time_seconds(value) -> float | None:
@@ -278,59 +379,66 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         print(f'No active jobs found for user "{user}".')
         return 0
 
-    base_keys = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'SUBMIT_TIME']
-    keys = base_keys + ['req_cor', 'req_mem(MB)', 'mem(MB)', 'run_time', 'idle_factor', 'cpu_util(%)']
+    headers = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'PWD', 'SUBMIT_TIME', 'RUN_TIME', 'REQ_CPU', 'REQ_MEM', 'CPU', 'MEM']
     rows: list[list[str]] = []
+
+    long_col_default = 30
+    max_col_width = getattr(args, 'max_col_width', None)
+    if max_col_width is None:
+        max_col_width = -1 if (getattr(args, 'all', False) or getattr(args, 'full_text', False)) else long_col_default
 
     job_count = len(bjobs_dic.get('JOBID', []))
 
     for index in range(job_count):
-        row = []
+        values = {k: bjobs_dic.get(k, []) for k in ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'SUBMIT_TIME']}
+        job_id = str(values['JOBID'][index]) if index < len(values['JOBID']) else ''
+        user_text = str(values['USER'][index]) if index < len(values['USER']) else ''
+        stat = str(values['STAT'][index]) if index < len(values['STAT']) else ''
+        queue = str(values['QUEUE'][index]) if index < len(values['QUEUE']) else ''
+        exec_host = str(values['EXEC_HOST'][index]) if index < len(values['EXEC_HOST']) else ''
+        job_name = str(values['JOB_NAME'][index]) if index < len(values['JOB_NAME']) else ''
+        submit_time = str(values['SUBMIT_TIME'][index]) if index < len(values['SUBMIT_TIME']) else ''
 
-        for key in base_keys:
-            values = bjobs_dic.get(key, [])
-            row.append(str(values[index]) if index < len(values) else '')
-
-        job_id = row[0] if row else ''
         job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -UF {job_id}') if job_id else {}
-
         if (not job_info) and job_id:
             job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -d -UF {job_id}')
 
         picked = _pick_job_info(job_info, job_id) or {}
-        req_core = str(picked.get('processors_requested', 'N/A') or 'N/A')
-        req_mem = _format_float(_safe_float(picked.get('rusage_mem')))
-        mem_used = _format_float(_safe_float(picked.get('mem')))
+        req_cpu = str(picked.get('processors_requested', 'N/A') or 'N/A')
+        req_mem = _format_scaled_memory(picked.get('rusage_mem'), input_unit='MB')
+        mem_used = _format_scaled_memory(picked.get('mem'), input_unit='MB')
 
         started_dt = _parse_lsf_datetime(str(picked.get('started_time', '')))
-        runtime_seconds = None
-        if started_dt:
-            runtime_seconds = (datetime.datetime.now() - started_dt).total_seconds()
-            run_time = _format_duration(runtime_seconds)
-        else:
-            run_time = 'N/A'
+        runtime_seconds = (datetime.datetime.now() - started_dt).total_seconds() if started_dt else None
+        run_time = _format_duration(runtime_seconds)
 
         cpu_time_seconds = _parse_cpu_time_seconds(picked.get('cpu_time'))
-        idle_factor = None
         cpu_util = None
-
         if runtime_seconds and runtime_seconds > 0 and cpu_time_seconds is not None:
-            idle_factor = max(0.0, cpu_time_seconds / runtime_seconds)
-            cpu_util = idle_factor * 100.0
+            cpu_util = max(0.0, cpu_time_seconds / runtime_seconds) * 100.0
 
-        row.extend([
-            req_core,
-            req_mem,
-            mem_used,
+        cpu_text = 'N/A' if cpu_util is None else f'{cpu_util:.1f}%'
+        pwd = str(picked.get('cwd', 'N/A') or 'N/A')
+
+        rows.append([
+            job_id,
+            user_text,
+            stat,
+            queue,
+            _truncate_text(_normalize_exec_hosts(exec_host), max_col_width),
+            _truncate_text(job_name, max_col_width),
+            _truncate_text(pwd, max_col_width),
+            _format_submit_time(submit_time),
             run_time,
-            _format_float(idle_factor),
-            _format_float(cpu_util),
+            req_cpu,
+            req_mem,
+            cpu_text,
+            mem_used,
         ])
-        rows.append(row)
 
     print(f'User: {user}')
     print(f'Active jobs: {job_count}')
-    _print_table(keys, rows)
+    _print_table(headers, rows)
 
     return 0
 
