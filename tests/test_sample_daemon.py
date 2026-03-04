@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 from monitor.common import sample_daemon
 
@@ -32,3 +33,26 @@ def test_service_content_contains_run_loop(tmp_path):
     content = manager._service_content()
     assert 'sample daemon run-loop' in content
     assert '--interval 300' in content
+
+
+def test_start_fallback_when_systemd_runtime_bus_unavailable(monkeypatch, tmp_path):
+    manager = sample_daemon.SampleDaemonManager(install_path=tmp_path, interval_seconds=300)
+
+    monkeypatch.setattr(manager, 'write_env_file', lambda: None)
+    monkeypatch.setattr(manager, 'write_service_file', lambda: None)
+    monkeypatch.setattr(manager, 'systemd_available', lambda: True)
+
+    def fake_run(_cmd, timeout=20):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout='',
+            stderr='Failed to get D-Bus connection: No such file or directory',
+        )
+
+    monkeypatch.setattr(manager, '_run', fake_run)
+    monkeypatch.setattr(manager, '_fallback_start', lambda: 'started (pid=1234)')
+
+    result = manager.start()
+    assert 'fallback mode' in result
+    assert 'started (pid=1234)' in result

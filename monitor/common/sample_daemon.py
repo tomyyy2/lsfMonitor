@@ -111,7 +111,7 @@ WantedBy=default.target
             return False
 
         try:
-            result = subprocess.run(
+            version = subprocess.run(
                 ['systemctl', '--user', '--version'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -119,7 +119,29 @@ WantedBy=default.target
                 check=False,
                 timeout=10,
             )
-            return result.returncode == 0
+            if version.returncode != 0:
+                return False
+
+            # systemctl binary may exist while user D-Bus session is unavailable
+            # (common on headless/root shells). Treat that case as unavailable so
+            # caller can use fallback mode.
+            bus = subprocess.run(
+                ['systemctl', '--user', 'show-environment'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if bus.returncode != 0:
+                stderr = (bus.stderr or '').lower()
+                stdout = (bus.stdout or '').lower()
+                if 'failed to get d-bus connection' in stderr or 'failed to connect to bus' in stderr:
+                    return False
+                if 'failed to get d-bus connection' in stdout or 'failed to connect to bus' in stdout:
+                    return False
+
+            return True
         except Exception:
             return False
 
@@ -214,9 +236,16 @@ WantedBy=default.target
             self.write_service_file()
             self._run(['systemctl', '--user', 'daemon-reload'])
             enabled = self._run(['systemctl', '--user', 'enable', '--now', SERVICE_NAME])
-            if enabled.returncode != 0:
-                return f'failed to start with systemd: {enabled.stderr.strip() or enabled.stdout.strip()}'
-            return 'started with systemd'
+            if enabled.returncode == 0:
+                return 'started with systemd'
+
+            error_text = (enabled.stderr or enabled.stdout or '').strip()
+            lowered = error_text.lower()
+            if ('failed to get d-bus connection' in lowered) or ('failed to connect to bus' in lowered):
+                fallback = self._fallback_start()
+                return f'systemd unavailable at runtime, fallback mode: {fallback}'
+
+            return f'failed to start with systemd: {error_text}'
 
         return self._fallback_start()
 
