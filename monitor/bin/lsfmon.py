@@ -193,25 +193,31 @@ def _safe_float(value) -> float | None:
         return None
 
 
-def _print_table(headers: list[str], rows: list[list[str]]) -> None:
+def _print_table(headers: list[str], rows: list[list[str]], right_align_headers: set[str] | None = None) -> None:
     if not rows:
         print('(no data)')
         return
 
+    align_right = right_align_headers or set()
     widths = [len(str(header)) for header in headers]
 
     for row in rows:
         for index, cell in enumerate(row):
             widths[index] = max(widths[index], len(str(cell)))
 
-    header_line = '  '.join(str(header).ljust(widths[index]) for index, header in enumerate(headers))
+    def _format_cell(header: str, value: str, width: int) -> str:
+        if header in align_right:
+            return str(value).rjust(width)
+        return str(value).ljust(width)
+
+    header_line = '  '.join(_format_cell(str(header), str(header), widths[index]) for index, header in enumerate(headers))
     split_line = '  '.join('-' * width for width in widths)
 
     print(header_line)
     print(split_line)
 
     for row in rows:
-        print('  '.join(str(cell).ljust(widths[index]) for index, cell in enumerate(row)))
+        print('  '.join(_format_cell(str(headers[index]), str(cell), widths[index]) for index, cell in enumerate(row)))
 
 
 def _resolve_db_path(cluster: str, db_root_override: str | None = None) -> Path:
@@ -539,7 +545,7 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
 
     print(f'User: {user}')
     print(f'Active jobs: {job_count}')
-    _print_table(headers, rows)
+    _print_table(headers, rows, right_align_headers={'REQ_CPU', 'CPU', 'REQ_MEM', 'MEM', 'MEM_UTIL'})
 
     return 0
 
