@@ -352,7 +352,12 @@ def _format_scaled_memory(value, input_unit: str = 'MB') -> str:
 
 
 def _format_mem_util(requested_mb: float | None, used_mb: float | None) -> str:
-    if (requested_mb is None) or (used_mb is None) or (requested_mb <= 0):
+    if used_mb is None:
+        return 'N/A'
+
+    if (requested_mb is None) or (requested_mb <= 0):
+        if used_mb >= 20 * 1024:
+            return 'N/A (NEED_RUSAGE)'
         return 'N/A'
 
     util = (used_mb / requested_mb) * 100.0
