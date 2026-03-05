@@ -352,6 +352,29 @@ def _format_mem_util(requested_mb: float | None, used_mb: float | None) -> str:
     return f'{util:.1f}% (OK)'
 
 
+def _parse_time_left_seconds(value) -> float | None:
+    text = str(value or '').strip()
+    if (not text) or (text in {'-', 'N/A', 'None'}):
+        return None
+
+    match = re.search(r'([0-9]+(?:\.[0-9]+)?)', text)
+    if not match:
+        return None
+
+    number = float(match.group(1))
+    lowered = text.lower()
+
+    if 'sec' in lowered or lowered.endswith('s'):
+        return number
+    if 'hour' in lowered or lowered.endswith('h'):
+        return number * 3600.0
+    if 'min' in lowered or lowered.endswith('m'):
+        return number * 60.0
+
+    # LSF `bjobs -o time_left` plain numeric output is in minutes.
+    return number * 60.0
+
+
 def _query_time_left_seconds(job_id: str) -> float | None:
     if not job_id:
         return None
@@ -361,17 +384,7 @@ def _query_time_left_seconds(job_id: str) -> float | None:
         return None
 
     text = stdout.decode('utf-8', 'ignore').strip()
-    if (not text) or (text in {'-', 'N/A'}):
-        return None
-
-    match = re.search(r'([0-9]+(?:\.[0-9]+)?)', text)
-    if not match:
-        return None
-
-    try:
-        return float(match.group(1))
-    except Exception:
-        return None
+    return _parse_time_left_seconds(text)
 
 
 def _truncate_text(value: str, max_width: int | None) -> str:
@@ -458,7 +471,7 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         runtime_seconds = (datetime.datetime.now() - started_dt).total_seconds() if started_dt else None
         run_time = _format_duration(runtime_seconds)
 
-        left_seconds = _safe_float(picked.get('time_left'))
+        left_seconds = _parse_time_left_seconds(picked.get('time_left'))
         if left_seconds is None:
             left_seconds = _query_time_left_seconds(job_id)
         left_time = _format_duration(left_seconds)
