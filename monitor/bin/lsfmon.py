@@ -439,6 +439,28 @@ def _query_time_left_seconds(job_id: str) -> float | None:
     return _parse_time_left_seconds(text)
 
 
+def _query_time_left_map(user: str) -> dict[str, float]:
+    mapping: dict[str, float] = {}
+    return_code, stdout, _stderr = common.run_command(f'bjobs -u {user} -o "jobid time_left" -noheader')
+    if return_code != 0:
+        return mapping
+
+    for raw_line in stdout.decode('utf-8', 'ignore').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        job_id = parts[0].strip()
+        time_text = parts[1].strip() if len(parts) > 1 else ''
+        seconds = _parse_time_left_seconds(time_text)
+        if seconds is not None:
+            mapping[job_id] = seconds
+
+    return mapping
+
+
 def _truncate_text(value: str, max_width: int | None) -> str:
     text = str(value)
     if (max_width is None) or (max_width <= 0):
@@ -487,6 +509,10 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
     headers = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'PWD', 'REQ_CPU', 'CPU', 'REQ_MEM', 'MEM', 'MEM_UTIL', 'SUBMIT_TIME', 'RUN_TIME', 'LEFT_TIME']
     rows: list[list[str]] = []
 
+    # Performance: prefetch job details and time_left in batch to avoid per-job scheduler calls.
+    job_info_batch = common_lsf.get_bjobs_uf_info(command=f'bjobs -u {user} -UF')
+    time_left_map = _query_time_left_map(user)
+
     long_col_default = 30
     max_col_width = getattr(args, 'max_col_width', None)
     if max_col_width is None:
@@ -504,11 +530,12 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         job_name = str(values['JOB_NAME'][index]) if index < len(values['JOB_NAME']) else ''
         submit_time = str(values['SUBMIT_TIME'][index]) if index < len(values['SUBMIT_TIME']) else ''
 
-        job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -UF {job_id}') if job_id else {}
-        if (not job_info) and job_id:
-            job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -d -UF {job_id}')
-
-        picked = _pick_job_info(job_info, job_id) or {}
+        picked = _pick_job_info(job_info_batch, job_id) or {}
+        if (not picked) and job_id:
+            job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -UF {job_id}')
+            if (not job_info) and job_id:
+                job_info = common_lsf.get_bjobs_uf_info(command=f'bjobs -d -UF {job_id}')
+            picked = _pick_job_info(job_info, job_id) or {}
         req_cpu = str(picked.get('processors_requested', 'N/A') or 'N/A')
         req_mem_mb = _safe_float(picked.get('rusage_mem'))
         used_mem_mb = _safe_float(picked.get('mem'))
@@ -524,6 +551,8 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         run_time = _format_duration(runtime_seconds)
 
         left_seconds = _parse_time_left_seconds(picked.get('time_left'))
+        if left_seconds is None:
+            left_seconds = time_left_map.get(job_id)
         if left_seconds is None:
             left_seconds = _query_time_left_seconds(job_id)
         left_time = _format_duration(left_seconds)
