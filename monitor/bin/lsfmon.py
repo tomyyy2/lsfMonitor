@@ -336,8 +336,7 @@ def _format_scaled_memory(value, input_unit: str = 'MB') -> str:
     for target_unit, scale in (('T', 1024**4), ('G', 1024**3), ('M', 1024**2), ('K', 1024)):
         if bytes_value >= scale:
             converted = bytes_value / scale
-            precision = 1 if converted < 10 else 0
-            if precision == 0:
+            if abs(converted - round(converted)) < 1e-9:
                 text = f'{int(round(converted))}'
             else:
                 text = f'{converted:.1f}'.rstrip('0').rstrip('.')
