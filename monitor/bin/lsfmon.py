@@ -108,9 +108,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     jobs_parser.set_defaults(handler=_handle_jobs)
 
-    mem_parser = subparsers.add_parser('mem', help='Show memory usage summary. Default: current user; optional: specify user.')
+    mem_parser = subparsers.add_parser(
+        'mem',
+        help='Show memory usage summary. Default stats include done/exit jobs; use -r to merge running jobs.',
+        description='Show memory usage summary. Default: finished jobs (done/exit) from sampled DB; optional -r merges current RUN jobs.',
+    )
     mem_parser.add_argument('user', nargs='?', default=None, help='Target user (optional).')
     mem_parser.add_argument('--days', type=int, default=7, help='Lookback days (default: 7).')
+    mem_parser.add_argument('-r', '--running', action='store_true', help='Merge current RUN jobs into summary.')
     mem_parser.set_defaults(handler=_handle_mem)
 
     advise_parser = subparsers.add_parser('advise', help='Show memory suggestion for one job.')
@@ -591,6 +596,7 @@ def _handle_mem(args, _tool: str, cluster: str) -> int:
         return 1
 
     user = str(getattr(args, 'user', '') or getpass.getuser()).strip()
+    include_running = bool(getattr(args, 'running', False))
     db_path = _resolve_db_path(cluster, args.db_path)
     user_db_path = db_path / 'user'
     table_name = f'user_{user}'
@@ -639,6 +645,37 @@ def _handle_mem(args, _tool: str, cluster: str) -> int:
             ]
         )
 
+    if include_running:
+        bjobs_dic = common_lsf.get_bjobs_uf_info(command=f'bjobs -u {user} -r -UF')
+        running_rows = []
+        for job_id, job_info in bjobs_dic.items():
+            requested_mb = _safe_float(job_info.get('rusage_mem'))
+            used_mb = _safe_float(job_info.get('mem'))
+            if used_mb is None:
+                used_mb = _safe_float(job_info.get('max_mem'))
+
+            running_rows.append((requested_mb, used_mb))
+
+        running_req = [req for req, _ in running_rows if req is not None]
+        running_used = [used for _, used in running_rows if used is not None]
+        running_waste = []
+        for req, used in running_rows:
+            if (req is None) or (used is None) or (req <= 0):
+                continue
+            running_waste.append(max(0.0, (req - used) / req))
+
+        if running_rows:
+            all_requested.extend(running_req)
+            all_used.extend(running_used)
+            all_waste_ratio.extend(running_waste)
+            summary_rows.append([
+                'RUNNING',
+                str(len(running_rows)),
+                _format_scaled_memory(statistics.mean(running_req) if running_req else None, input_unit='MB'),
+                _format_scaled_memory(statistics.mean(running_used) if running_used else None, input_unit='MB'),
+                _format_float(statistics.mean(running_waste) * 100 if running_waste else None),
+            ])
+
     if not summary_rows:
         print(f'No memory samples found for user "{user}" in last {args.days} day(s).')
         print('Hint: collect user history first, for example: bsample -u')
@@ -646,6 +683,7 @@ def _handle_mem(args, _tool: str, cluster: str) -> int:
 
     print(f'User: {user}')
     print(f'Cluster DB: {user_db_path}')
+    print(f'Mode: done/exit{", merged RUN" if include_running else ""}')
     _print_table(['Date', 'Jobs', 'AvgReq', 'AvgMax', 'PotentialWaste(%)'], summary_rows)
 
     overall_req = statistics.mean(all_requested) if all_requested else None
