@@ -357,6 +357,11 @@ def _parse_time_left_seconds(value) -> float | None:
     if (not text) or (text in {'-', 'N/A', 'None'}):
         return None
 
+    # Some LSF outputs append state suffix (e.g. 483:13L / 483.15L); strip trailing letters first.
+    text = re.sub(r'[A-Za-z]+$', '', text).strip()
+    if (not text) or (text in {'-', 'N/A', 'None'}):
+        return None
+
     # Common LSF style: HHH:MM (e.g. 483:13)
     hhmm_match = re.match(r'^\s*(\d+):(\d{1,2})\s*$', text)
     if hhmm_match:
