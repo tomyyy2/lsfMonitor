@@ -1178,6 +1178,7 @@ def _export_weekly_csv(
     anomaly_top: List[Dict[str, object]],
     output_dir: Path,
     stamp: str,
+    mode: str = "full",
 ) -> List[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1199,22 +1200,29 @@ def _export_weekly_csv(
         "mem_util",
     ]
 
-    with daily_file.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=daily_columns)
-        writer.writeheader()
-        writer.writerows(rows)
+    exported: List[Path] = []
 
-    with metrics_file.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["metric", "value", "note"])
-        writer.writeheader()
-        writer.writerows(key_metrics)
+    if mode in {"full", "trends"}:
+        with daily_file.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=daily_columns)
+            writer.writeheader()
+            writer.writerows(rows)
+        exported.append(daily_file)
 
-    with anomaly_file.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["rank", "date", "score", "reasons", "summary"])
-        writer.writeheader()
-        writer.writerows(anomaly_top)
+    if mode in {"full", "summary"}:
+        with metrics_file.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["metric", "value", "note"])
+            writer.writeheader()
+            writer.writerows(key_metrics)
+        exported.append(metrics_file)
 
-    return [daily_file, metrics_file, anomaly_file]
+        with anomaly_file.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["rank", "date", "score", "reasons", "summary"])
+            writer.writeheader()
+            writer.writerows(anomaly_top)
+        exported.append(anomaly_file)
+
+    return exported
 
 
 def _export_weekly_md(
@@ -1224,6 +1232,7 @@ def _export_weekly_md(
     output_dir: Path,
     stamp: str,
     range_text: str,
+    mode: str = "full",
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     file_path = output_dir / f"lsfmon_weekly_{stamp}.md"
@@ -1233,60 +1242,66 @@ def _export_weekly_md(
         "",
         f"- Generated at: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"- Range: {range_text}",
+        f"- Mode: {mode}",
         "",
-        "## 关键指标表 (Key Metrics)",
-        "",
-        "| Metric | Value | Note |",
-        "|---|---:|---|",
     ]
 
-    for item in key_metrics:
-        lines.append("| {metric} | {value} | {note} |".format(**item))
-
-    lines.extend(
-        [
+    if mode in {"full", "summary"}:
+        lines.extend([
+            "## 关键指标表 (Key Metrics)",
             "",
-            "## 异常TOP项",
-            "",
-        ]
-    )
+            "| Metric | Value | Note |",
+            "|---|---:|---|",
+        ])
 
-    if anomaly_top:
+        for item in key_metrics:
+            lines.append("| {metric} | {value} | {note} |".format(**item))
+
         lines.extend(
             [
-                "| Rank | Date | Score | Reasons | Summary |",
-                "|---:|---|---:|---|---|",
+                "",
+                "## 异常TOP项",
+                "",
             ]
         )
-        for item in anomaly_top:
+
+        if anomaly_top:
+            lines.extend(
+                [
+                    "| Rank | Date | Score | Reasons | Summary |",
+                    "|---:|---|---:|---|---|",
+                ]
+            )
+            for item in anomaly_top:
+                lines.append(
+                    "| {rank} | {date} | {score} | {reasons} | {summary} |".format(
+                        rank=item.get("rank", ""),
+                        date=item.get("date", ""),
+                        score=item.get("score", ""),
+                        reasons=item.get("reasons", ""),
+                        summary=item.get("summary", ""),
+                    )
+                )
+        else:
+            lines.append("No anomalies detected in this range.")
+
+    if mode in {"full", "trends"}:
+        lines.extend(
+            [
+                "",
+                "## Daily Details",
+                "",
+                "| Date | Jobs(total/done/exit) | Success% | Queue(avg_njobs/run/pend) | Util(slot/cpu/mem)% |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+
+        for row in rows:
             lines.append(
-                "| {rank} | {date} | {score} | {reasons} | {summary} |".format(
-                    rank=item.get("rank", ""),
-                    date=item.get("date", ""),
-                    score=item.get("score", ""),
-                    reasons=item.get("reasons", ""),
-                    summary=item.get("summary", ""),
+                "| {date} | {jobs_total}/{jobs_done}/{jobs_exit} | {success_rate} | {avg_njobs}/{avg_run}/{avg_pend} | {slot_util}/{cpu_util}/{mem_util} |".format(
+                    **row
                 )
             )
-    else:
-        lines.append("No anomalies detected in this range.")
-
-    lines.extend(
-        [
-            "",
-            "## Daily Details",
-            "",
-            "| Date | Jobs(total/done/exit) | Success% | Queue(avg_njobs/run/pend) | Util(slot/cpu/mem)% |",
-            "|---|---:|---:|---:|---:|",
-        ]
-    )
-
-    for row in rows:
-        lines.append(
-            "| {date} | {jobs_total}/{jobs_done}/{jobs_exit} | {success_rate} | {avg_njobs}/{avg_run}/{avg_pend} | {slot_util}/{cpu_util}/{mem_util} |".format(
-                **row
-            )
-        )
 
     lines.append("")
     file_path.write_text("\n".join(lines), encoding="utf-8")
@@ -1335,9 +1350,29 @@ def _cmd_mgmt_trend(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_report_weekly(args: argparse.Namespace) -> int:
+def _resolve_report_mode(args: argparse.Namespace) -> str:
+    selected = []
+    if bool(getattr(args, "full", False)):
+        selected.append("full")
+    if bool(getattr(args, "summary", False)):
+        selected.append("summary")
+    if bool(getattr(args, "trends", False)):
+        selected.append("trends")
+
+    if len(selected) > 1:
+        raise ValueError("Only one of -f/--full, -s/--summary, -t/--trends can be selected.")
+
+    return selected[0] if selected else "full"
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
     try:
-        _, start_ts, start_date = parse_range_to_start(args.range)
+        mode = _resolve_report_mode(args)
+        day_count = int(getattr(args, "day", 7))
+        if day_count <= 0:
+            raise ValueError("--day must be greater than 0.")
+        range_text = f"{day_count}d"
+        _, start_ts, start_date = parse_range_to_start(range_text)
         export_targets = _parse_export_targets(args.export)
     except ValueError as error:
         _friendly_print(f"Error: {error}")
@@ -1347,11 +1382,11 @@ def _cmd_report_weekly(args: argparse.Namespace) -> int:
     payload = _overview_payload(roots, start_ts, start_date)
     rows = _merge_weekly_rows(payload)
 
-    _friendly_print(f"[lsfmon] Weekly report (range={args.range})")
+    _friendly_print(f"[lsfmon] Report (mode={mode}, day={day_count})")
     _friendly_print(f"Data roots: {', '.join(str(p) for p in roots)}")
 
     if not rows:
-        _friendly_print("No weekly data found in sqlite database for this range. Try running bsample first.")
+        _friendly_print("No report data found in sqlite database for this range. Try running bsample first.")
         return 0
 
     key_metrics = _build_key_metrics(rows)
@@ -1362,10 +1397,10 @@ def _cmd_report_weekly(args: argparse.Namespace) -> int:
     exported_files: List[Path] = []
 
     if "csv" in export_targets:
-        exported_files.extend(_export_weekly_csv(rows, key_metrics, anomaly_top, output_dir, stamp))
+        exported_files.extend(_export_weekly_csv(rows, key_metrics, anomaly_top, output_dir, stamp, mode=mode))
 
     if "md" in export_targets:
-        exported_files.append(_export_weekly_md(rows, key_metrics, anomaly_top, output_dir, stamp, args.range))
+        exported_files.append(_export_weekly_md(rows, key_metrics, anomaly_top, output_dir, stamp, range_text, mode=mode))
 
     _friendly_print(f"Rows: {len(rows)}")
     for path in exported_files:
@@ -1399,20 +1434,24 @@ def build_parser() -> argparse.ArgumentParser:
     mgmt_trend.set_defaults(handler=_cmd_mgmt_trend)
 
     # lsfmon report ...
-    report_parser = subparsers.add_parser("report", help="Report commands")
-    report_subparsers = report_parser.add_subparsers(dest="report_cmd")
-
-    report_weekly = report_subparsers.add_parser("weekly", help="Generate weekly report")
-    report_weekly.add_argument("--range", default="7d", help="Time range, default weekly = 7d")
-    report_weekly.add_argument("--export", default="md", help="Export formats, e.g. csv,md")
-    report_weekly.add_argument("--output-dir", default=".", help="Directory for exported files")
-    report_weekly.set_defaults(handler=_cmd_report_weekly)
+    report_parser = subparsers.add_parser("report", help="Generate report (default: --full, --day 7)")
+    report_parser.add_argument("-f", "--full", action="store_true", help="Full report (summary + trends). Default mode.")
+    report_parser.add_argument("-s", "--summary", action="store_true", help="Summary-only report.")
+    report_parser.add_argument("-t", "--trends", action="store_true", help="Trends-only report.")
+    report_parser.add_argument("-d", "--day", type=int, default=7, help="Lookback days (default: 7).")
+    report_parser.add_argument("--export", default="md", help="Export formats, e.g. csv,md")
+    report_parser.add_argument("--output-dir", default=".", help="Directory for exported files")
+    report_parser.set_defaults(handler=_cmd_report)
 
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv_list = list(argv) if argv is not None else list(sys.argv[1:])
+
+    # Backward compatibility: allow legacy `lsfmon report weekly ...`
+    if len(argv_list) >= 2 and argv_list[0] == "report" and argv_list[1] == "weekly":
+        argv_list = ["report"] + argv_list[2:]
 
     parser = build_parser()
     args = parser.parse_args(argv_list)
