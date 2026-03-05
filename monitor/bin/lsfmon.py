@@ -372,6 +372,14 @@ def _parse_time_left_seconds(value) -> float | None:
         seconds = int(hms_match.group(3))
         return float(hours * 3600 + minutes * 60 + seconds)
 
+    # Some LSF environments render as HHH.MM where MM is minute field (e.g. 483.15 -> 483h15m)
+    hh_dot_mm_match = re.match(r'^\s*(\d+)\.(\d{1,2})\s*$', text)
+    if hh_dot_mm_match:
+        hours = int(hh_dot_mm_match.group(1))
+        minutes = int(hh_dot_mm_match.group(2))
+        if 0 <= minutes < 60:
+            return float(hours * 3600 + minutes * 60)
+
     match = re.search(r'([0-9]+(?:\.[0-9]+)?)', text)
     if not match:
         return None
