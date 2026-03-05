@@ -356,13 +356,19 @@ def _format_mem_util(requested_mb: float | None, used_mb: float | None) -> str:
         return 'N/A'
 
     util = (used_mb / requested_mb) * 100.0
-    if util > 100.0:
-        return f'{util:.1f}% (OVER)'
-    if util < 50.0:
-        return f'{util:.1f}% (WASTE)'
-    if util >= 80.0:
-        return f'{util:.1f}% (TIGHT)'
-    return f'{util:.1f}% (OK)'
+
+    if util < 40.0:
+        tag = 'WASTE'
+    elif util < 85.0:
+        tag = 'OK'
+    elif util <= 100.0:
+        tag = 'TIGHT'
+    elif util <= 150.0:
+        tag = 'WARN'
+    else:
+        tag = 'CRASH_RISK'
+
+    return f'{util:.1f}% ({tag})'
 
 
 def _parse_time_left_seconds(value) -> float | None:
