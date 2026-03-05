@@ -359,7 +359,7 @@ def _format_mem_util(requested_mb: float | None, used_mb: float | None) -> str:
 
     if util < 40.0:
         tag = 'WASTE'
-    elif util < 85.0:
+    elif util < 90.0:
         tag = 'OK'
     elif util <= 100.0:
         tag = 'TIGHT'
