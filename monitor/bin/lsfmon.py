@@ -114,7 +114,8 @@ def _build_parser() -> argparse.ArgumentParser:
     mem_parser.set_defaults(handler=_handle_mem)
 
     advise_parser = subparsers.add_parser('advise', help='Show memory suggestion for one job.')
-    advise_parser.add_argument('--job', required=True, help='Job ID.')
+    advise_parser.add_argument('job_id', nargs='?', default=None, help='Job ID (positional shortcut).')
+    advise_parser.add_argument('-j', '--job', dest='job', default=None, help='Job ID.')
     advise_parser.set_defaults(handler=_handle_advise, require_lsf=True)
 
     sample_parser = subparsers.add_parser('sample', help='Sampling operations.')
@@ -329,9 +330,48 @@ def _format_scaled_memory(value, input_unit: str = 'MB') -> str:
 
     for target_unit, scale in (('T', 1024**4), ('G', 1024**3), ('M', 1024**2), ('K', 1024)):
         if bytes_value >= scale:
-            return f'{bytes_value / scale:.1f}{target_unit}'
+            converted = bytes_value / scale
+            precision = 1 if converted < 10 else 0
+            text = f'{converted:.{precision}f}'.rstrip('0').rstrip('.')
+            return f'{text}{target_unit}'
 
     return f'{int(bytes_value)}B'
+
+
+def _format_mem_util(requested_mb: float | None, used_mb: float | None) -> str:
+    if (requested_mb is None) or (used_mb is None) or (requested_mb <= 0):
+        return 'N/A'
+
+    util = (used_mb / requested_mb) * 100.0
+    if util > 100.0:
+        return f'{util:.1f}% (OVER)'
+    if util < 50.0:
+        return f'{util:.1f}% (WASTE)'
+    if util >= 80.0:
+        return f'{util:.1f}% (TIGHT)'
+    return f'{util:.1f}% (OK)'
+
+
+def _query_time_left_seconds(job_id: str) -> float | None:
+    if not job_id:
+        return None
+
+    return_code, stdout, _stderr = common.run_command(f'bjobs -o "time_left" -noheader {job_id}')
+    if return_code != 0:
+        return None
+
+    text = stdout.decode('utf-8', 'ignore').strip()
+    if (not text) or (text in {'-', 'N/A'}):
+        return None
+
+    match = re.search(r'([0-9]+(?:\.[0-9]+)?)', text)
+    if not match:
+        return None
+
+    try:
+        return float(match.group(1))
+    except Exception:
+        return None
 
 
 def _truncate_text(value: str, max_width: int | None) -> str:
@@ -379,7 +419,7 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         print(f'No active jobs found for user "{user}".')
         return 0
 
-    headers = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'PWD', 'SUBMIT_TIME', 'RUN_TIME', 'REQ_CPU', 'REQ_MEM', 'CPU', 'MEM']
+    headers = ['JOBID', 'USER', 'STAT', 'QUEUE', 'EXEC_HOST', 'JOB_NAME', 'PWD', 'REQ_CPU', 'CPU', 'REQ_MEM', 'MEM', 'MEM_UTIL', 'SUBMIT_TIME', 'RUN_TIME', 'LEFT_TIME']
     rows: list[list[str]] = []
 
     long_col_default = 30
@@ -405,12 +445,23 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
 
         picked = _pick_job_info(job_info, job_id) or {}
         req_cpu = str(picked.get('processors_requested', 'N/A') or 'N/A')
-        req_mem = _format_scaled_memory(picked.get('rusage_mem'), input_unit='MB')
-        mem_used = _format_scaled_memory(picked.get('mem'), input_unit='MB')
+        req_mem_mb = _safe_float(picked.get('rusage_mem'))
+        used_mem_mb = _safe_float(picked.get('mem'))
+        if used_mem_mb is None:
+            used_mem_mb = _safe_float(picked.get('max_mem'))
+
+        req_mem = _format_scaled_memory(req_mem_mb, input_unit='MB')
+        mem_used = _format_scaled_memory(used_mem_mb, input_unit='MB')
+        mem_util = _format_mem_util(req_mem_mb, used_mem_mb)
 
         started_dt = _parse_lsf_datetime(str(picked.get('started_time', '')))
         runtime_seconds = (datetime.datetime.now() - started_dt).total_seconds() if started_dt else None
         run_time = _format_duration(runtime_seconds)
+
+        left_seconds = _safe_float(picked.get('time_left'))
+        if left_seconds is None:
+            left_seconds = _query_time_left_seconds(job_id)
+        left_time = _format_duration(left_seconds)
 
         cpu_time_seconds = _parse_cpu_time_seconds(picked.get('cpu_time'))
         cpu_util = None
@@ -428,12 +479,14 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
             _truncate_text(_normalize_exec_hosts(exec_host), max_col_width),
             _truncate_text(job_name, max_col_width),
             _truncate_text(pwd, max_col_width),
+            req_cpu,
+            cpu_text,
+            req_mem,
+            mem_used,
+            mem_util,
             _format_submit_time(submit_time),
             run_time,
-            req_cpu,
-            req_mem,
-            cpu_text,
-            mem_used,
+            left_time,
         ])
 
     print(f'User: {user}')
@@ -539,8 +592,8 @@ def _handle_mem(args, _tool: str, cluster: str) -> int:
             [
                 date_string,
                 str(len(row_data)),
-                _format_float(statistics.mean(requested_values) if requested_values else None),
-                _format_float(statistics.mean(used_values) if used_values else None),
+                _format_scaled_memory(statistics.mean(requested_values) if requested_values else None, input_unit='MB'),
+                _format_scaled_memory(statistics.mean(used_values) if used_values else None, input_unit='MB'),
                 _format_float(statistics.mean(waste_ratio_values) * 100 if waste_ratio_values else None),
             ]
         )
@@ -552,7 +605,7 @@ def _handle_mem(args, _tool: str, cluster: str) -> int:
 
     print(f'User: {user}')
     print(f'Cluster DB: {user_db_path}')
-    _print_table(['Date', 'Jobs', 'AvgReq(MB)', 'AvgMax(MB)', 'PotentialWaste(%)'], summary_rows)
+    _print_table(['Date', 'Jobs', 'AvgReq', 'AvgMax', 'PotentialWaste(%)'], summary_rows)
 
     overall_req = statistics.mean(all_requested) if all_requested else None
     overall_used = statistics.mean(all_used) if all_used else None
@@ -560,8 +613,8 @@ def _handle_mem(args, _tool: str, cluster: str) -> int:
 
     print('')
     print('Overall')
-    print(f'  Avg requested memory : {_format_float(overall_req)} MB')
-    print(f'  Avg max used memory  : {_format_float(overall_used)} MB')
+    print(f'  Avg requested memory : {_format_scaled_memory(overall_req, input_unit="MB")}')
+    print(f'  Avg max used memory  : {_format_scaled_memory(overall_used, input_unit="MB")}')
     print(f'  Potential waste      : {_format_float(overall_waste)} %')
 
     if (overall_req is not None) and (overall_used is not None):
@@ -587,8 +640,51 @@ def _pick_job_info(job_dic: dict, job_id: str):
     return job_dic[first_key]
 
 
+def _resolve_advise_job_id(args) -> str | None:
+    for candidate in [getattr(args, 'job', None), getattr(args, 'job_id', None)]:
+        text = str(candidate or '').strip()
+        if text:
+            return text
+    return None
+
+
+def _analyze_exit_reason(job_info: dict, requested_mb: float | None, used_mb: float | None) -> tuple[str | None, list[str], str | None]:
+    status = str(job_info.get('status', '') or '').upper()
+    if status != 'EXIT':
+        return None, [], None
+
+    term_signal = str(job_info.get('term_signal', '') or '').strip()
+    exit_code = str(job_info.get('exit_code', '') or '').strip()
+    evidence: list[str] = []
+
+    if term_signal:
+        evidence.append(f'term_signal={term_signal}')
+    if exit_code:
+        evidence.append(f'exit_code={exit_code}')
+
+    if term_signal == 'TERM_MEMLIMIT':
+        advice = 'Exit reason is MEMLIMIT. Increase rusage[mem] and align select[mem>] with observed max memory.'
+        if (requested_mb is not None) and (used_mb is not None):
+            over = used_mb - requested_mb
+            if over > 0:
+                advice += f' Observed max exceeded request by {_format_scaled_memory(over, input_unit="MB")}. '
+        return 'TERM_MEMLIMIT', evidence, advice
+
+    if (requested_mb is not None) and (used_mb is not None) and (used_mb > requested_mb):
+        evidence.append('observed_max > requested')
+        return 'MEMORY_EXCEEDED_REQUEST', evidence, 'Memory usage exceeded requested rusage[mem]; increase memory request to avoid EXIT.'
+
+    if term_signal:
+        return term_signal, evidence, f'Job exited with {term_signal}; investigate scheduler/command logs for detailed cause.'
+
+    return 'EXIT', evidence, 'Job exited; check command stderr/stdout and scheduler logs for root cause.'
+
+
 def _handle_advise(args, _tool: str, _cluster: str) -> int:
-    job_id = str(args.job)
+    job_id = _resolve_advise_job_id(args)
+    if not job_id:
+        print('Error: please provide a job id, e.g. `bmon advise 12345` or `bmon advise -j 12345`.', file=sys.stderr)
+        return 1
 
     job_dic = common_lsf.get_bjobs_uf_info(command=f'bjobs -UF {job_id}')
 
@@ -611,8 +707,15 @@ def _handle_advise(args, _tool: str, _cluster: str) -> int:
     print(f'  User             : {job_info.get("user", "N/A")}')
     print(f'  Status           : {job_info.get("status", "N/A")}')
     print(f'  Queue            : {job_info.get("queue", "N/A")}')
-    print(f'  Requested (MB)   : {_format_float(requested_mb)}')
-    print(f'  Observed Max (MB): {_format_float(used_mb)}')
+    print(f'  Requested        : {_format_scaled_memory(requested_mb, input_unit="MB")}')
+    print(f'  Observed Max     : {_format_scaled_memory(used_mb, input_unit="MB")}')
+    print(f'  Mem Util         : {_format_mem_util(requested_mb, used_mb)}')
+
+    exit_reason, evidence, exit_advice = _analyze_exit_reason(job_info, requested_mb, used_mb)
+    if exit_reason:
+        print(f'  Exit reason      : {exit_reason}')
+        if evidence:
+            print(f'  Evidence         : {"; ".join(evidence)}')
 
     if (requested_mb is None) and (used_mb is None):
         print('  Advice           : Not enough memory data yet. Run sampling first (bsample -j / -u / -m).')
@@ -621,14 +724,14 @@ def _handle_advise(args, _tool: str, _cluster: str) -> int:
     if used_mb is None and requested_mb is not None:
         suggest_low = max(64.0, requested_mb * 0.8)
         suggest_high = max(suggest_low, requested_mb * 1.2)
-        print(f'  Suggested rusage[mem] (MB): {suggest_low:.1f} ~ {suggest_high:.1f}')
+        print(f'  Suggested rusage[mem]: {_format_scaled_memory(suggest_low, "MB")} ~ {_format_scaled_memory(suggest_high, "MB")}')
         print('  Advice           : No observed max memory yet; range is based on current request.')
         return 0
 
     if requested_mb is None and used_mb is not None:
         suggest_low = max(64.0, used_mb * 1.2)
         suggest_high = max(suggest_low, used_mb * 1.5)
-        print(f'  Suggested rusage[mem] (MB): {suggest_low:.1f} ~ {suggest_high:.1f}')
+        print(f'  Suggested rusage[mem]: {_format_scaled_memory(suggest_low, "MB")} ~ {_format_scaled_memory(suggest_high, "MB")}')
         print('  Advice           : Request value missing; range is estimated from observed memory.')
         return 0
 
@@ -636,9 +739,11 @@ def _handle_advise(args, _tool: str, _cluster: str) -> int:
 
     suggest_low = max(64.0, used_mb * 1.2)
     suggest_high = max(suggest_low, used_mb * 1.5)
-    print(f'  Suggested rusage[mem] (MB): {suggest_low:.1f} ~ {suggest_high:.1f}')
+    print(f'  Suggested rusage[mem]: {_format_scaled_memory(suggest_low, "MB")} ~ {_format_scaled_memory(suggest_high, "MB")}')
 
-    if requested_mb > used_mb * 1.8:
+    if exit_advice:
+        print(f'  Advice           : {exit_advice}')
+    elif requested_mb > used_mb * 1.8:
         print('  Advice           : Request appears over-sized; reduce memory to improve cluster efficiency.')
     elif requested_mb < used_mb * 1.05:
         print('  Advice           : Request is very tight; increase memory buffer to reduce EXIT risk.')
