@@ -357,6 +357,21 @@ def _parse_time_left_seconds(value) -> float | None:
     if (not text) or (text in {'-', 'N/A', 'None'}):
         return None
 
+    # Common LSF style: HHH:MM (e.g. 483:13)
+    hhmm_match = re.match(r'^\s*(\d+):(\d{1,2})\s*$', text)
+    if hhmm_match:
+        hours = int(hhmm_match.group(1))
+        minutes = int(hhmm_match.group(2))
+        return float(hours * 3600 + minutes * 60)
+
+    # Also accept HH:MM:SS
+    hms_match = re.match(r'^\s*(\d+):(\d{1,2}):(\d{1,2})\s*$', text)
+    if hms_match:
+        hours = int(hms_match.group(1))
+        minutes = int(hms_match.group(2))
+        seconds = int(hms_match.group(3))
+        return float(hours * 3600 + minutes * 60 + seconds)
+
     match = re.search(r'([0-9]+(?:\.[0-9]+)?)', text)
     if not match:
         return None
@@ -371,7 +386,7 @@ def _parse_time_left_seconds(value) -> float | None:
     if 'min' in lowered or lowered.endswith('m'):
         return number * 60.0
 
-    # LSF `bjobs -o time_left` plain numeric output is in minutes.
+    # Plain numeric fallback: keep historical assumption as minutes.
     return number * 60.0
 
 
