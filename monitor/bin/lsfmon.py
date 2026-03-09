@@ -193,6 +193,10 @@ def _safe_float(value) -> float | None:
         return None
 
 
+def _strip_ansi(text: str) -> str:
+    return re.sub(r'\x1b\[[0-9;]*m', '', str(text))
+
+
 def _print_table(headers: list[str], rows: list[list[str]], right_align_headers: set[str] | None = None) -> None:
     if not rows:
         print('(no data)')
@@ -203,12 +207,15 @@ def _print_table(headers: list[str], rows: list[list[str]], right_align_headers:
 
     for row in rows:
         for index, cell in enumerate(row):
-            widths[index] = max(widths[index], len(str(cell)))
+            widths[index] = max(widths[index], len(_strip_ansi(str(cell))))
 
     def _format_cell(header: str, value: str, width: int) -> str:
+        raw = str(value)
+        text_len = len(_strip_ansi(raw))
+        padding = max(width - text_len, 0)
         if header in align_right:
-            return str(value).rjust(width)
-        return str(value).ljust(width)
+            return (' ' * padding) + raw
+        return raw + (' ' * padding)
 
     header_line = '  '.join(_format_cell(str(header), str(header), widths[index]) for index, header in enumerate(headers))
     split_line = '  '.join('-' * width for width in widths)
@@ -266,14 +273,16 @@ def _parse_lsf_datetime(value: str) -> datetime.datetime | None:
     return None
 
 
-def _format_duration(delta_seconds: float | int | None) -> str:
+def _format_duration(delta_seconds: float | int | None, with_seconds: bool = True) -> str:
     if delta_seconds is None:
         return 'N/A'
 
     total = int(max(float(delta_seconds), 0))
     hours, rem = divmod(total, 3600)
     minutes, seconds = divmod(rem, 60)
-    return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+    if with_seconds:
+        return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+    return f'{hours:02d}:{minutes:02d}'
 
 
 def _format_submit_time(value: str) -> str:
@@ -351,6 +360,71 @@ def _format_scaled_memory(value, input_unit: str = 'MB') -> str:
     return f'{int(bytes_value)}B'
 
 
+def _format_memory_g(value, input_unit: str = 'MB') -> str:
+    number = _safe_float(value)
+    if number is None:
+        return 'N/A'
+
+    factor_from_unit = {
+        'B': 1 / (1024**3),
+        'K': 1 / (1024**2),
+        'KB': 1 / (1024**2),
+        'M': 1 / 1024,
+        'MB': 1 / 1024,
+        'G': 1,
+        'GB': 1,
+        'T': 1024,
+        'TB': 1024,
+    }
+    multiplier = factor_from_unit.get(str(input_unit or 'MB').upper(), 1 / 1024)
+    g_value = number * multiplier
+    text = f'{g_value:.1f}'.rstrip('0').rstrip('.')
+    return f'{text}G'
+
+
+def _supports_ansi_color() -> bool:
+    if os.environ.get('NO_COLOR'):
+        return False
+    term = os.environ.get('TERM', '').lower()
+    if term in {'', 'dumb'}:
+        return False
+    return bool(getattr(sys.stdout, 'isatty', lambda: False)())
+
+
+def _colorize(text: str, color: str) -> str:
+    if not _supports_ansi_color():
+        return text
+
+    color_map = {
+        'red': '\033[31m',
+        'green': '\033[32m',
+        'yellow': '\033[33m',
+        'reset': '\033[0m',
+    }
+    prefix = color_map.get(color)
+    reset = color_map['reset']
+    if not prefix:
+        return text
+    return f'{prefix}{text}{reset}'
+
+
+def _get_mem_util_thresholds() -> tuple[float, float, float]:
+    defaults = (40.0, 90.0, 100.0)  # waste_lt, ok_lt, warn_lte
+    raw = getattr(config, 'mem_util_thresholds', None)
+
+    if isinstance(raw, dict):
+        try:
+            waste_lt = float(raw.get('waste_lt', defaults[0]))
+            ok_lt = float(raw.get('ok_lt', defaults[1]))
+            warn_lte = float(raw.get('warn_lte', defaults[2]))
+            if waste_lt < ok_lt <= warn_lte:
+                return (waste_lt, ok_lt, warn_lte)
+        except Exception:
+            return defaults
+
+    return defaults
+
+
 def _format_mem_util(requested_mb: float | None, used_mb: float | None) -> str:
     if used_mb is None:
         return 'N/A'
@@ -361,19 +435,23 @@ def _format_mem_util(requested_mb: float | None, used_mb: float | None) -> str:
         return 'N/A'
 
     util = (used_mb / requested_mb) * 100.0
+    waste_lt, ok_lt, warn_lte = _get_mem_util_thresholds()
 
-    if util < 40.0:
+    if util < waste_lt:
         tag = 'WASTE'
-    elif util < 90.0:
+        color = 'yellow'
+    elif util < ok_lt:
         tag = 'OK'
-    elif util <= 100.0:
-        tag = 'TIGHT'
-    elif util <= 150.0:
+        color = 'green'
+    elif util <= warn_lte:
         tag = 'WARN'
+        color = 'yellow'
     else:
-        tag = 'CRASH_RISK'
+        tag = 'EXCEED'
+        color = 'red'
 
-    return f'{util:.1f}% ({tag})'
+    text = f'{util:.1f}% ({tag})'
+    return _colorize(text, color)
 
 
 def _parse_time_left_seconds(value) -> float | None:
@@ -542,20 +620,20 @@ def _handle_jobs(args, _tool: str, _cluster: str) -> int:
         if used_mem_mb is None:
             used_mem_mb = _safe_float(picked.get('max_mem'))
 
-        req_mem = _format_scaled_memory(req_mem_mb, input_unit='MB')
-        mem_used = _format_scaled_memory(used_mem_mb, input_unit='MB')
+        req_mem = _format_memory_g(req_mem_mb, input_unit='MB')
+        mem_used = _format_memory_g(used_mem_mb, input_unit='MB')
         mem_util = _format_mem_util(req_mem_mb, used_mem_mb)
 
         started_dt = _parse_lsf_datetime(str(picked.get('started_time', '')))
         runtime_seconds = (datetime.datetime.now() - started_dt).total_seconds() if started_dt else None
-        run_time = _format_duration(runtime_seconds)
+        run_time = _format_duration(runtime_seconds, with_seconds=False)
 
         left_seconds = _parse_time_left_seconds(picked.get('time_left'))
         if left_seconds is None:
             left_seconds = time_left_map.get(job_id)
         if left_seconds is None:
             left_seconds = _query_time_left_seconds(job_id)
-        left_time = _format_duration(left_seconds)
+        left_time = _format_duration(left_seconds, with_seconds=False)
 
         cpu_time_seconds = _parse_cpu_time_seconds(picked.get('cpu_time'))
         cpu_util = None
